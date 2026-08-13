@@ -29,3 +29,9 @@ demo/audio/
 
 # Demovideon (26 MB) — distribueras som GitHub-release, inte i repot
 demo/*.mp4
+assets/_klipp/
+
+# Exporter som landar i projektroten när man kör appen härifrån.
+# Innehåller användarens eget material — får aldrig till ett publikt repo.
+/*.mp4
+/*.mvp.json
