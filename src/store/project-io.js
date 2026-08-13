@@ -137,7 +137,10 @@ export async function clearLocal() {
  * @param {{project: object, on: Function}} store
  * @param {{intervalMs?: number, onError?: (err: Error) => void}} opts
  */
-export function createAutosaver(store, { intervalMs = 4000, onError = null } = {}) {
+export function createAutosaver(store, { intervalMs = 4000, onError = null, save = null } = {}) {
+  // `save` låter anroparen styra VART det sparas — sedan projekten infördes går
+  // autosparet till det öppna projektet, inte till en global nyckel.
+  const skriv = typeof save === 'function' ? save : saveLocal;
   let running = false;
   let dirty = false;
   let saving = false;
@@ -161,7 +164,7 @@ export function createAutosaver(store, { intervalMs = 4000, onError = null } = {
     saving = true;
     let failed = false;
     try {
-      await saveLocal(store.project);
+      await skriv(store.project);
     } catch (err) {
       // Försök igen först vid nästa ändring — annars maler vi på i onödan.
       failed = true;

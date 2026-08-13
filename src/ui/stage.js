@@ -1,8 +1,9 @@
 // Scenytan: passar in bildytan i panelen och sköter direktmanipulering av fält.
 // Äger #stage, #stage-inner, #overlay och #stage-hud. Se CONTRACT.md §9.
 
-import { clamp, formatTime } from '../core/util.js';
-import { fieldInSpan, findField } from '../core/model.js';
+import { clamp } from '../core/util.js';
+import { fieldInSpan, findField, findFlow } from '../core/model.js';
+import { FLOW_MIME, hasType } from './dnd.js';
 
 const MIN = 0.02;      // minsta fältstorlek, normaliserat
 const SNAP_PX = 6;     // snappavstånd i skärmpixlar
@@ -15,6 +16,19 @@ export function mount(root, ctx) {
   const overlay = root.querySelector('#overlay');
   const hud = root.querySelector('#stage-hud');
   const canvas = root.querySelector('#gl');
+
+  // Ett helt tomt projekt visar en svart ruta och fyra "Tomt" — ingenting pekar
+  // framåt. En rad, bara i det läget, och borta med första innehållet.
+  const tomText = document.createElement('div');
+  tomText.className = 'stage-tom';
+  tomText.textContent = 'Släpp video och ljud här — eller klicka Demo';
+  inner.append(tomText);
+  const uppdateraTomtext = () => {
+    const p = store.project;
+    tomText.hidden = !!(p.media.length || p.fields.length || p.flows.length || p.oscillators.length);
+  };
+  uppdateraTomtext();
+  store.on('project', uppdateraTomtext);
 
   // Snapplinjerna ligger över fältrutorna och får aldrig ta emot pekare.
   const guideLayer = document.createElement('div');
@@ -110,6 +124,29 @@ export function mount(root, ctx) {
       h.dataset.dir = dir;
       return h;
     });
+
+    // Släppmål för flöden: dra en flödesrad hit för att koppla högen till fältet.
+    el.addEventListener('dragover', (e) => {
+      if (!hasType(e, FLOW_MIME)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'link';
+      el.classList.add('droppbar');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('droppbar'));
+    el.addEventListener('drop', (e) => {
+      el.classList.remove('droppbar');
+      if (!hasType(e, FLOW_MIME)) return;
+      e.preventDefault();
+      const flödesId = e.dataTransfer.getData(FLOW_MIME);
+      if (!flödesId) return;
+      store.update((p) => {
+        const f = findField(p, id);
+        if (f) f.flowId = flödesId;
+      }, { label: 'koppla flöde', dirty: ['flow'] });
+      const flöde = findFlow(store.project, flödesId);
+      ctx.toast?.(`Fältet läser ${flöde ? flöde.name : 'flödet'}`);
+    });
+
     return { el, label, handles, name: null, color: null, rot: null, sel: false, hidden: null, field: null };
   }
 
@@ -180,7 +217,12 @@ export function mount(root, ctx) {
       targets: snapTargets(id),
       moved: false,
     };
-    overlay.setPointerCapture(e.pointerId);
+    try {
+      overlay.setPointerCapture(e.pointerId);
+    } catch {
+      // Utan fångad pekare fungerar draget ändå — det får bara
+      // inte rivas med om webbläsaren vägrar fånga den.
+    }
     e.preventDefault();
   }
 
@@ -397,7 +439,8 @@ export function mount(root, ctx) {
     lastHud = now;
     const stats = ctx.renderer ? ctx.renderer.stats : null;
     const fps = stats && isFinite(stats.fps) ? stats.fps : ctx.fps || 0;
-    hud.textContent = `${formatTime(time)}  ${Math.round(fps)} bild/s  ${drawnFields(stats, time)} fält`;
+    // Klockan står redan i verktygsraden — HUD:en upprepar den inte.
+    hud.textContent = `${Math.round(fps)} bild/s  ${drawnFields(stats, time)} fält`;
   }
 
   function drawnFields(stats, time) {

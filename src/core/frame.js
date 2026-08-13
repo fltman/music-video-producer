@@ -48,6 +48,10 @@ export function buildFrameState(project, ctx) {
       media = findMedia(project, segment.mediaId);
       sourceTime = sourceTimeAt(segment, time, field.speed, media ? media.duration : 0);
     }
+    // Nästa segment är känt i förväg — schemat är deterministiskt. Videopoolen
+    // använder det för att hinna avkoda nästa klipp innan snittet, så att
+    // klippbytet inte visar en tom bildruta.
+    const nextSegment = segment && schedule ? efterföljande(schedule, segment) : null;
 
     fields.push({
       id: field.id,
@@ -63,6 +67,7 @@ export function buildFrameState(project, ctx) {
       flowId: field.flowId,
       mediaId: segment ? segment.mediaId : null,
       segment,
+      nextSegment,
       sourceTime,
       aspect: media && media.height ? media.width / media.height : 16 / 9,
       effects: resolveEffects(field, compiled, time),
@@ -81,6 +86,23 @@ export function buildFrameState(project, ctx) {
     background: project.background,
     fields,
   };
+}
+
+/** Segmentet efter ett givet, via binärsökning på den sorterade listan. */
+function efterföljande(schedule, segment) {
+  let lo = 0;
+  let hi = schedule.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (schedule[mid].t0 <= segment.t0) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return idx >= 0 && idx + 1 < schedule.length ? schedule[idx + 1] : null;
 }
 
 /** Effektkedja med upplösta parametervärden och gate-intensitet. */

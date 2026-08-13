@@ -3,6 +3,7 @@
 
 export const MEDIA_MIME = 'text/x-mvp-media';
 export const FIELD_MIME = 'text/x-mvp-field';
+export const FLOW_MIME = 'text/x-mvp-flow';
 
 /** Bär draget en viss datatyp? `types` är inte en vanlig array. */
 export function hasType(e, type) {

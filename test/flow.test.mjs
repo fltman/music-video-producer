@@ -292,3 +292,47 @@ test('scheduleStats ger klippbytenas tider', () => {
   assertEqual(tomt.count, 0);
   assertEqual(tomt.cuts.length, 0);
 });
+
+// ── Ett trasigt klipp får inte släcka hela högen ───────────────────────────
+
+test('ett klipp med noll längd hoppas över, resten spelar', () => {
+  const media = new Map([
+    ['a', { id: 'a', duration: 4 }],
+    ['trasig', { id: 'trasig', duration: 4 }],
+    ['b', { id: 'b', duration: 4 }],
+  ]);
+  const spec = {
+    clips: [
+      { mediaId: 'a', in: 0, out: null },
+      { mediaId: 'trasig', in: 2, out: 1 },   // ut före in
+      { mediaId: 'b', in: 0, out: null },
+    ],
+    order: 'sequential', seed: 1, advance: 'onEnd', speed: 1,
+  };
+  const sched = buildSchedule(spec, media, null, 20);
+  assert(sched.length > 0, 'schemat ska inte vara tomt');
+  const använda = new Set(sched.map((s) => s.mediaId));
+  assert(!använda.has('trasig'), 'det trasiga klippet ska inte förekomma');
+  assert(använda.has('a') && använda.has('b'), 'de hela klippen ska spela');
+  assertClose(sched[sched.length - 1].t1, 20, 1e-6, 'schemat ska täcka hela låten');
+});
+
+test('ett medium utan känd längd släcker inte de andra', () => {
+  const media = new Map([['a', { id: 'a', duration: 4 }], ['okänd', { id: 'okänd', duration: 0 }]]);
+  const spec = {
+    clips: [{ mediaId: 'okänd', in: 0, out: null }, { mediaId: 'a', in: 0, out: null }],
+    order: 'sequential', seed: 1, advance: 'onEnd', speed: 1,
+  };
+  const sched = buildSchedule(spec, media, null, 12);
+  assert(sched.length > 0, 'schemat ska inte vara tomt');
+  assert(sched.every((s) => s.mediaId === 'a'), 'bara det läsbara klippet ska spela');
+});
+
+test('bara trasiga klipp ger tomt schema', () => {
+  const media = new Map([['x', { id: 'x', duration: 0 }]]);
+  const sched = buildSchedule(
+    { clips: [{ mediaId: 'x', in: 0, out: null }], order: 'sequential', seed: 1, advance: 'onEnd', speed: 1 },
+    media, null, 10,
+  );
+  assertEqual(sched.length, 0);
+});

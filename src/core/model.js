@@ -1,12 +1,14 @@
 // Fabriker och standardvärden för projektmodellen. Se CONTRACT.md §4.
 // Ren modul: ingen DOM.
 
-import { uid } from './util.js';
+import { uid, clone } from './util.js';
 
 export const PROJECT_VERSION = 1;
 
 export const FIELD_COLORS = [
-  '#ff3b6b', '#4dd8ff', '#c8ff4d', '#ffb020', '#b06bff', '#3bffb0', '#ff6bd6', '#7d8cff',
+  // Första posten får inte vara accentfärgen — då smälter fältdata ihop med
+  // gränssnittets markeringar. Sparade projekt behåller sina lagrade färger.
+  '#ff8a3d', '#4dd8ff', '#c8ff4d', '#ffb020', '#b06bff', '#3bffb0', '#ff6bd6', '#7d8cff',
 ];
 
 export const BLEND_MODES = ['normal', 'add', 'screen', 'multiply', 'difference'];
@@ -102,6 +104,7 @@ export function createOscillator(partial = {}, index = 0) {
     rateUnit: 'hz',
     shape: 'square',
     phase: 0,
+    showLane: true,   // visas spåret i tidslinjen?
     ...partial,
   };
 }
@@ -135,6 +138,73 @@ export const findMedia = (p, id) => p.media.find((m) => m.id === id) || null;
 export function fieldInSpan(field, t) {
   for (const s of field.spans) if (t >= s.start && t < s.end) return true;
   return false;
+}
+
+/**
+ * Delar ett fält vid tiden t. Allt som ligger efter t flyttas till ett nytt,
+ * fristående fält med samma egenskaper men egna id — effekterna får nya id
+ * eftersom renderaren cachar texturer per effektinstans.
+ *
+ * @returns {string|null} det nya fältets id, eller null om delningen inte gav
+ *   två delar (t låg utanför fältets spann).
+ */
+export function splitFieldAt(project, fieldId, t) {
+  const field = findField(project, fieldId);
+  if (!field) return null;
+
+  const före = [];
+  const efter = [];
+  for (const s of field.spans) {
+    if (s.end <= t + 1e-6) före.push({ ...s });
+    else if (s.start >= t - 1e-6) efter.push({ ...s });
+    else {
+      före.push({ start: s.start, end: t });
+      efter.push({ start: t, end: s.end });
+    }
+  }
+  if (!före.length || !efter.length) return null;
+
+  const ny = clone(field);
+  ny.id = uid('f');
+  ny.name = nästaNamn(project, field.name);
+  ny.spans = normalizeSpans(efter);
+  ny.effects = (ny.effects || []).map((e) => ({ ...e, id: uid('e') }));
+
+  field.spans = normalizeSpans(före);
+  const plats = project.fields.indexOf(field);
+  project.fields.splice(plats + 1, 0, ny);
+  return ny.id;
+}
+
+/** "Fält 1" → "Fält 1 (2)" → "Fält 1 (3)", utan krock med befintliga namn. */
+function nästaNamn(project, namn) {
+  const bas = namn.replace(/\s*\((\d+)\)\s*$/, '');
+  const tagna = new Set(project.fields.map((f) => f.name));
+  for (let n = 2; n < 999; n += 1) {
+    const kandidat = `${bas} (${n})`;
+    if (!tagna.has(kandidat)) return kandidat;
+  }
+  return `${bas} (kopia)`;
+}
+
+/**
+ * Rensar alla kopplingar till en oscillator ur projektet. Måste vara EN
+ * implementation: biblioteket och tangentbordet raderade tidigare på var sitt
+ * sätt, och bibliotekets version letade kvar efter `advanceBinding` på flödet
+ * — där den inte suttit sedan uppspelningen flyttade till fältet.
+ */
+export function stripOscillatorRefs(project, oscId) {
+  const kill = (b) => (b && b.oscId === oscId ? null : b);
+  for (const field of project.fields || []) {
+    field.gate = kill(field.gate);
+    field.advanceBinding = kill(field.advanceBinding);
+    for (const inst of field.effects || []) {
+      inst.gate = kill(inst.gate);
+      for (const key of Object.keys(inst.bindings || {})) {
+        if (inst.bindings[key] && inst.bindings[key].oscId === oscId) delete inst.bindings[key];
+      }
+    }
+  }
 }
 
 /** Normaliserar spann: sorterade, positiva, sammanslagna vid överlapp. */

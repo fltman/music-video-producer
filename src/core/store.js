@@ -51,7 +51,9 @@ class Store {
     const before = clone(this.project);
     mutator(this.project);
     if (opts.label !== false) {
-      this._undo.push({ label: opts.label || 'ändring', project: before });
+      // Markeringen sparas med: en ångrad delning ska landa på originalfältet,
+      // en ångrad radering på det återuppväckta objektet — inte i "Inget markerat".
+      this._undo.push({ label: opts.label || 'ändring', project: before, selection: { ...this.selection } });
       if (this._undo.length > this._limit) this._undo.shift();
       this._redo.length = 0;
     }
@@ -69,20 +71,22 @@ class Store {
   undo() {
     const entry = this._undo.pop();
     if (!entry) return false;
-    this._redo.push({ label: entry.label, project: clone(this.project) });
+    this._redo.push({ label: entry.label, project: clone(this.project), selection: { ...this.selection } });
     this.project = entry.project;
     this.dirty.add('osc').add('flow').add('render');
     this.emit('project', { label: `ångra ${entry.label}`, dirty: ['osc', 'flow', 'render'] });
+    if (entry.selection) this.select(entry.selection.kind, entry.selection.id, entry.selection.parentId);
     return true;
   }
 
   redo() {
     const entry = this._redo.pop();
     if (!entry) return false;
-    this._undo.push({ label: entry.label, project: clone(this.project) });
+    this._undo.push({ label: entry.label, project: clone(this.project), selection: { ...this.selection } });
     this.project = entry.project;
     this.dirty.add('osc').add('flow').add('render');
     this.emit('project', { label: `gör om ${entry.label}`, dirty: ['osc', 'flow', 'render'] });
+    if (entry.selection) this.select(entry.selection.kind, entry.selection.id, entry.selection.parentId);
     return true;
   }
 

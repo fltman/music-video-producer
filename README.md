@@ -20,6 +20,25 @@ npm start          # http://localhost:8162
 Klicka **Demo** i verktygsraden för ett färdigt uppsatt projekt, eller släpp egna
 video- och ljudfiler på fönstret.
 
+## Projekt
+
+Du arbetar alltid i ett projekt. Varje projekt har sina egna inställningar, sin
+egen tidslinje, sina egna oscillatorer **och sina egna mediafiler**. Projektknappen
+i verktygsraden visar det öppna projektet och listar de andra; där skapar,
+duplicerar, döper om och raderar du dem.
+
+Att mediafilerna ägs av projektet betyder att samma klipp importerat i två projekt
+lagras två gånger. Det är avsiktligt: alternativet vore en delad hög där varje
+radering blir en fråga om vem mer som råkar använda filen. Nu är radering
+fullständig — projektet och dess filer försvinner tillsammans.
+
+Allt du gör **autosparas** till webbläsarens databas — var fjärde sekund och vid
+varje flikbyte. `Spara fil` skriver dessutom ut projektet som `.mvp.json`;
+mediafilerna följer inte med i filen, men släpper du projektfilen tillsammans
+med mediafilerna på mottagarens dator syr importen ihop dem igen. `Öppna` läser
+alltid in en projektfil som ett **nytt** projekt med egna kopior av de
+mediafiler som finns lokalt.
+
 ## Begreppen
 
 **Fält** — en rektangel på videoytan med plats, storlek, z-ordning, blandningsläge
@@ -35,6 +54,9 @@ och vilken oscillator som triggar bytet sitter på fältet. Därför kan två f�
 samma klipphög och ändå klippa i helt olika takt: ett som hackar på bastrumman, ett
 som byter på virveln. Ger man dem samma inställningar går de i lås igen, för
 schemat är en ren funktion av (hög, inställningar, flanker).
+
+Ett flöde kan också **dras från Flöden-fliken och släppas på ett fält på scenen**
+för att koppla dem — snabbare än vägen via inspektorn.
 
 Klippen visas med miniatyrbild: **för musen över bilden för att bläddra genom
 klippet**, så att du ser vad det är utan att spela upp det. Dra media från
@@ -99,12 +121,27 @@ förhandsvisningen. En live-`AnalyserNode` hade inte kunnat något av det.
 | `Home` / `End` | början / slut |
 | piltangenter | nudda markerat fält (`⇧` = 10 px) |
 | `⌫` | ta bort markerat objekt |
+| `⌘D` | duplicera markerat fält/flöde/oscillator |
+| `,` / `.` | föregående / nästa beat |
+| `⌥`+klick på ett spann | ta bort spannet |
+| `S` / `⌘K` | dela markerat fält vid spelhuvudet |
 | `⌘Z` / `⇧⌘Z` | ångra / gör om |
-| `⌘S` / `⌘E` | spara projekt / exportera video |
+| `⌘S` / `⌘E` | spara projektfil / exportera video |
 
-I tidslinjen: `⌘`+scroll zoomar, scroll panorerar, `⇧` under drag stänger av
-snappning mot taktrutnätet. På scenen: `⌥` under drag stänger av snappning mot
-kanter och andra fält.
+Oscillatorspåren tar plats. Klicka **krysset i spårets namnplatta** för att dölja
+det; ögat i Osc-fliken tänder det igen. Ett dolt spår tar ingen höjd alls, och
+oscillatorn fortsätter styra bilden precis som förut.
+
+I tidslinjen: **dubbelklick i linjalen zoomar ut till hela låten**, dubbelklick i
+tom yta på en fältrad skapar ett spann (en spökkontur visar var innan du klickar),
+scroll rullar lodrätt, `⇧`+scroll panorerar i tid, `⌘`+scroll zoomar,
+`⇧` under drag stänger av snappning mot taktrutnätet. **Högerklick på ett fältspann
+delar fältet** där du klickar — delen efter snittet blir ett nytt fristående fält
+med samma egenskaper. På scenen: `⌥` under drag stänger av snappning mot kanter och
+andra fält.
+
+Panelernas storlek dras i kanterna: gränsen mellan biblioteket och scenen, och
+mellan scenen och tidslinjen. Dubbelklick på en avdelare återställer den.
 
 ## Teknik
 
@@ -112,6 +149,10 @@ Vanilla ES-moduler, inget byggsteg, inga beroenden. WebGL2 för kompositionen �
 varje fält renderas i egen FBO, effektkedjan kör ping-pong, resultatet komponeras
 med blandningsläge. Media och projekt sparas i IndexedDB. Export sker via
 `MediaRecorder`.
+
+Exporten spelar in i realtid. Under tiden ligger en inspelningsrad nere till höger
+med förlopp, återstående tid och en avbrytknapp — scenen lämnas fri, så att du ser
+vad du spelar in.
 
 `CONTRACT.md` är bindande för modulgränser, datatyper och shader-signaturer.
 `npm test` kör enhetstesterna för de rena modulerna.

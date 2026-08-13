@@ -57,7 +57,11 @@ Browsermoduler:
 | `src/video/player.js` | Videoelement-pool, seek/spela enligt segmentschema |
 | `src/ui/*.js` | Tidslinje, scen-overlay, inspektor, bibliotek |
 | `src/ui/scope.js` | Live-skop: spektrum med dragbart band + rullande envelope |
-| `src/store/media.js` | IndexedDB för mediablobar + projekt |
+| `src/ui/thumb.js` | Miniatyrer av videoklipp med scrubbning, egen elementpool |
+| `src/ui/dnd.js` | Delat drag-och-släpp-protokoll mellan gränssnittsmodulerna |
+| `src/ui/resize.js` | Justerbara paneler via `--w-lib` och `--h-tl` |
+| `src/store/media.js` | IndexedDB: mediablobar, nyckelvärden, databasschemat |
+| `src/store/projects.js` | Projekt: lista, öppna, byta namn, duplicera, radera |
 | `src/export/recorder.js` | `captureStream` + `MediaRecorder` → webm |
 
 ## 4. Datamodell
@@ -115,6 +119,7 @@ Oscillator = {
   // endast source==='lfo':
   rate: 2, rateUnit: 'hz'|'beat', shape: 'sine'|'square'|'saw'|'triangle'|'random',
   phase: 0,
+  showLane: true,              // visas spåret i tidslinjen?
 }
 
 EffectInstance = {
@@ -132,6 +137,11 @@ Binding = {
   invert: false,
 }
 ```
+
+`splitFieldAt(project, fieldId, t)` delar ett fält vid tiden `t`: allt efter `t`
+flyttas till ett nytt fristående fält med samma egenskaper. Både fältet och dess
+effektinstanser får nya id — renderaren cachar texturer per effektinstans, så
+delade id skulle ge korsande efterbilder mellan de två fälten.
 
 `mode` för `Field.gate` och `Field.advanceBinding` tolkas så här: ett fälts gate
 använder gate/pulse som synlighet; `advanceBinding` bryr sig bara om *flankerna*
@@ -220,6 +230,15 @@ resolveBinding(binding, compiled, t) -> number // redan mappat till [min,max]
 buildSchedule(spec, media, events: Float32Array, duration) -> Segment[]
 Segment = { t0, t1, clipIndex, mediaId, offset }   // offset = starttid i källklippet
 ```
+
+`buildFrameState` lägger också `nextSegment` på varje fält. Videopoolen använder
+det för att skapa och söka fram nästa klipps element ~1,5 s före snittet. Utan
+förberedning saknar det nya elementet avkodad data i själva snittet, och
+renderaren hade ingen bild att visa.
+
+Renderaren håller dessutom kvar fältets senaste dugliga bild (`_held`) när
+källan tillfälligt saknar data. Färgfyllningen är till för **tomma fält i
+redigeraren** — aldrig för glappet i ett klippbyte.
 
 `spec` är klipphögen sammanslagen med fältets uppspelning:
 `{ clips, order, seed, advance, speed }`. Ett schema byggs alltså **per fält**,
@@ -354,3 +373,35 @@ Händelser: `project`, `selection`, `analysis`, `osc`, `flow`, `transport`.
 `node test/run.mjs` kör alla `test/*.test.mjs`. Endast rena moduler testas.
 Inga nätverksanrop, inga assets utanför `assets/` (som återskapas av
 `tools/make-assets.sh`).
+
+
+## 12. Projekt
+
+Ett projekt är en namngiven, fristående enhet: egna inställningar, egen tidslinje,
+egna oscillatorer **och egna mediafiler**. Man arbetar alltid i exakt ett projekt.
+
+```
+IndexedDB `mvp`, version 2
+  projects — { id, name, created, modified, data }        nyckel = id
+  media    — { id, projectId, blob, meta, savedAt }       nyckel = id, index projectId
+  meta     — { currentProject: id, autosave: <gammal> }   nyckel = sträng
+```
+
+**Media ägs av ett projekt.** Att importera samma fil i två projekt lagrar den två
+gånger. Det är ett medvetet val: alternativet — en delad hög med referensräkning —
+gör varje radering till en fråga om vem mer som råkar peka på blobben. Med ägarskap
+är `deleteProject` fullständig och diskutrymmet går att förstå.
+
+`duplicateProject` kopierar därför blobarna och skriver om **alla** medie-id i
+kopian via `remapMediaIds(data, karta)`: `media[].id`, `flows[].clips[].mediaId`
+och `audio.mediaId`. Missas en av dem pekar kopian tyst på originalets filer, och
+en radering av originalet tömmer kopian — därför är den funktionen ren och testad
+för sig.
+
+`ensureProject()` körs vid start. Finns inga projekt men ett gammalt autospar från
+tiden före projekten, flyttas det in som ett riktigt projekt och all faderlös media
+adopteras av det. **Det gamla autosparet raderas aldrig** — det ligger kvar som
+säkerhetskopia.
+
+Autosparet skriver till det öppna projektet via `createAutosaver(store, { save })`.
+Vid flikbyte och sidstängning sparas direkt, utan att vänta ut intervallet.

@@ -48,6 +48,9 @@ const CHANNEL_LABEL = { both: 'Båda', left: 'Vänster', right: 'Höger' };
 const EFFECT_GROUPS = ['Rörelse', 'Sönderfall', 'Raster', 'Färg och ljus'];
 const EFFECT_GROUP_SIZE = 4;
 
+// Senast använda oscillatorn — en ny koppling börjar där, inte på nummer ett.
+let senasteOscId = null;
+
 // ── Små hjälpare ──────────────────────────────────────────────────────────
 
 function h(tag, cls, text) {
@@ -116,6 +119,15 @@ export function mount(el, ctx) {
   }
 
   function rebuild() {
+    // Markeringsbyte river panelen med force — hinner ett fokuserat fält inte få
+    // sin change-händelse kastas det halvskrivna värdet. Blur committar det.
+    if (typing()) {
+      try {
+        document.activeElement.blur();
+      } catch {
+        // Ett element som vägrar släppa fokus ska inte stoppa ombyggnaden.
+      }
+    }
     const top = el.scrollTop;
     syncers = [];
     meters = [];
@@ -176,7 +188,14 @@ export function mount(el, ctx) {
     const i = h('input');
     i.type = 'text';
     i.value = get();
-    i.addEventListener('change', () => commit(i.value));
+    i.addEventListener('change', () => {
+      // Tomt namn är inget namn — återställ utan commit, samma regel som
+      // projektmenyn.
+      const v = i.value.trim();
+      if (!v) { i.value = get(); return; }
+      i.value = v;
+      commit(v);
+    });
     addSync(() => { if (!focused(i)) i.value = get(); });
     return i;
   }
@@ -191,15 +210,32 @@ export function mount(el, ctx) {
     const dec = decimals != null ? decimals : decimalsFor(step);
     const show = () => { i.value = fmtNum(get(), dec); };
     show();
-    i.addEventListener('change', () => {
-      let v = Number(i.value);
+
+    // Fördröjd commit: varje pilsteg fyrar 'change', och varje commit blir en
+    // ångra-post. Medan fältet har fokus samlas stegen ihop och committas som
+    // EN post efter 400 ms tystnad; blur och Enter committar direkt.
+    let timer = null;
+    const commitNow = (raw) => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      let v = Number(raw != null ? raw : i.value);
       if (!Number.isFinite(v)) { show(); return; }
       if (min != null) v = Math.max(min, v);
       if (max != null) v = Math.min(max, v);
       commit(Number(v.toFixed(dec)));
       show();
+    };
+    i.addEventListener('change', () => {
+      if (!focused(i)) { commitNow(); return; }
+      if (timer) clearTimeout(timer);
+      const raw = i.value;   // det senast stegade, inte det som råkar stå där sen
+      timer = setTimeout(() => commitNow(raw), 400);
     });
-    addSync(() => { if (!focused(i)) show(); });
+    i.addEventListener('blur', () => { if (timer) commitNow(); });
+    i.addEventListener('keydown', (e) => {
+      // Enter: låt change-händelsen som Enter själv utlöser landa först.
+      if (e.key === 'Enter') setTimeout(() => { if (timer) commitNow(); }, 0);
+    });
+    addSync(() => { if (!focused(i) && !timer) show(); });
     return i;
   }
 
@@ -389,16 +425,20 @@ export function mount(el, ctx) {
 
     if (!binding) {
       return button('Koppla oscillator', () => {
-        const first = store.project.oscillators[0];
-        if (!first) {
+        const osc = (senasteOscId && findOsc(store.project, senasteOscId))
+          || store.project.oscillators[0];
+        if (!osc) {
           ctx.toast?.('Skapa en oscillator först', true);
           return;
         }
+        senasteOscId = osc.id;
         const min = spec.min != null ? spec.min : 0;
         const max = spec.max != null ? spec.max : 1;
-        store.update((p) => write(p, createBinding(first.id, { min, max })), {
-          label: `koppla ${label}`, dirty,
-        });
+        const mode = spec.startMode || 'gate';
+        store.update((p) => {
+          write(p, createBinding(osc.id, { min, max, mode }));
+          if (spec.efterKoppling) spec.efterKoppling(p);
+        }, { label: `koppla ${label}`, dirty });
       }, 'btn ghost wide');
     }
 
@@ -417,8 +457,15 @@ export function mount(el, ctx) {
     ];
     body.append(row('Oscillator', selectField(oscList, () => read()?.oscId || '', (v) => {
       if (!v) store.update((p) => write(p, null), { label: `koppla bort ${label}`, dirty });
-      else set((b) => { b.oscId = v; }, `koppling ${label}`);
+      else {
+        senasteOscId = v;
+        set((b) => { b.oscId = v; }, `koppling ${label}`);
+      }
     })));
+
+    // Klippbytet läser bara flankerna (CONTRACT §4) — läge/min/max/invertera kan
+    // inte påverka någonting och ska då inte heller visas.
+    if (spec.enkel) return card;
 
     body.append(row('Läge', segField(opts(BINDING_MODES, BIND_MODE_LABEL), () => read()?.mode || 'gate',
       (v) => set((b) => { b.mode = v; }, 'kopplingsläge'))));
@@ -470,11 +517,26 @@ export function mount(el, ctx) {
       commit: (v) => set((f) => { f.z = v; }, 'z'),
       step: 1,
     })));
-    s1.append(sliderRow('Opacitet', {
-      get: () => F().opacity,
-      apply: on((f, v) => { f.opacity = clamp(v, 0, 1); }),
-      min: 0, max: 1, step: 0.01,
-    }));
+    // Synlighetskopplingen bor på opacitetsraden — det är samma ratt.
+    const gateKey = `fält:${id}:gate`;
+    s1.append(row('Opacitet',
+      ...sliderParts({
+        get: () => F().opacity,
+        apply: on((f, v) => { f.opacity = clamp(v, 0, 1); }),
+        min: 0, max: 1, step: 0.01, label: 'opacitet',
+      }),
+      bindButton(gateKey, () => F().gate || null, 'synligheten')));
+    if (open.has(gateKey)) {
+      s1.append(bindingEditor({
+        read: (p) => (p ? findField(p, id) : F())?.gate || null,
+        write: (p, b) => {
+          const f = findField(p, id);
+          if (f) f.gate = b;
+        },
+        dirty: ['render'],
+        label: 'synlighet',
+      }));
+    }
     s1.append(row('Blandning', selectField(opts(BLEND_MODES, BLEND_LABEL), () => F().blend,
       (v) => set((f) => { f.blend = v; }, 'blandning'))));
     s1.append(row('Passning', selectField(opts(FIT_MODES, FIT_LABEL), () => F().fit,
@@ -508,18 +570,46 @@ export function mount(el, ctx) {
     s3.append(row('Flöde', selectField(flowList, () => F().flowId || '',
       (v) => set((f) => { f.flowId = v || null; }, 'flöde'))));
     s3.append(button('Nytt flöde', () => {
+      let flowId = null;
       store.update((p) => {
         const flow = createFlow({}, p.flows.length);
         p.flows.push(flow);
+        flowId = flow.id;
         const f = findField(p, id);
         if (f) f.flowId = flow.id;
       }, { label: 'nytt flöde', dirty: ['flow'] });
+      // Fältet är färdigt i och med kopplingen — nästa steg (lägga klipp) bor i
+      // flödespanelen, så det är dit markeringen ska. Samma efterläge som
+      // bibliotekets +.
+      if (flowId) store.select('flow', flowId);
     }, 'btn wide'));
 
     // Uppspelningshuvudet hör till fältet: två fält kan dela klipphög och ändå
-    // byta klipp på var sin oscillator.
-    s3.append(row('Avancering', selectField(opts(ADVANCE_MODES, ADVANCE_LABEL), () => F().advance,
-      (v) => set((f) => { f.advance = v; }, 'avancering'))));
+    // byta klipp på var sin oscillator. Klippbyteskopplingen bor på samma rad.
+    const advKey = `fält:${id}:klippbyte`;
+    s3.append(row('Avancering',
+      selectField(opts(ADVANCE_MODES, ADVANCE_LABEL), () => F().advance,
+        (v) => set((f) => { f.advance = v; }, 'avancering')),
+      bindButton(advKey, () => F().advanceBinding || null, 'klippbytet')));
+    if (open.has(advKey)) {
+      s3.append(bindingEditor({
+        read: (p) => (p ? findField(p, id) : F())?.advanceBinding || null,
+        write: (p, b) => {
+          const f = findField(p, id);
+          if (f) f.advanceBinding = b;
+        },
+        // Att koppla en oscillator till klippbytet ÄR att be om trigger-
+        // klippning. Utan detta gjorde kopplingen ingenting förrän man bytte
+        // Avancering från 'onEnd' för hand.
+        efterKoppling: (p) => {
+          const f = findField(p, id);
+          if (f && f.advance === 'onEnd') f.advance = 'onTrigger';
+        },
+        enkel: true,
+        dirty: ['flow'],
+        label: 'klippbyte',
+      }));
+    }
     s3.append(sliderRow('Hastighet', {
       get: () => F().speed,
       apply: (p, v) => {
@@ -530,30 +620,6 @@ export function mount(el, ctx) {
     }));
     el.append(s3);
 
-    const s3b = section('Klippbyte');
-    s3b.append(bindingEditor({
-      read: (p) => (p ? findField(p, id) : F())?.advanceBinding || null,
-      write: (p, b) => {
-        const f = findField(p, id);
-        if (f) f.advanceBinding = b;
-      },
-      dirty: ['flow'],
-      label: 'klippbyte',
-    }));
-    el.append(s3b);
-
-    const s4 = section('Synlighet');
-    s4.append(bindingEditor({
-      read: (p) => (p ? findField(p, id) : F())?.gate || null,
-      write: (p, b) => {
-        const f = findField(p, id);
-        if (f) f.gate = b;
-      },
-      dirty: ['render'],
-      label: 'synlighet',
-    }));
-    el.append(s4);
-
     el.append(renderEffects(id));
   }
 
@@ -563,15 +629,12 @@ export function mount(el, ctx) {
     const field = findField(store.project, fieldId);
     const effects = field ? field.effects : [];
 
-    effects.forEach((inst, index) => {
-      s.append(effectCard(fieldId, inst.id, index, list));
-    });
-
-    if (!effects.length) s.append(h('div', 'empty', 'Inga effekter'));
-
-    const addRow = h('div', 'row wide');
-    const pair = h('div', 'pair');
+    // Väljaren bor i sektionshuvudet så att den står stilla hur många kort
+    // som än ligger under.
+    const head = s.firstElementChild;
+    head.append(h('span', 'spacer'));
     const picker = h('select');
+    picker.style.maxWidth = '140px';
     EFFECT_LIST.forEach((def, i) => {
       if (i % EFFECT_GROUP_SIZE === 0) {
         const g = document.createElement('optgroup');
@@ -583,16 +646,30 @@ export function mount(el, ctx) {
       picker.lastElementChild.append(op);
     });
     picker.value = EFFECT_LIST.length ? EFFECT_LIST[0].type : '';
-    pair.append(picker, button('Lägg till', () => {
+    head.append(picker, button('Lägg till', () => {
       const type = picker.value;
       if (!EFFECTS[type]) return;
+      let fxId = null;
       store.update((p) => {
         const f = findField(p, fieldId);
-        if (f) f.effects.push(createEffect(type, defaultParams(type)));
+        if (!f) return;
+        const e = createEffect(type, defaultParams(type));
+        fxId = e.id;
+        f.effects.push(e);
       }, { label: 'lägg till effekt', dirty: ['render'] });
+      if (!fxId) return;
+      // Det nya kortet utfällt och i sikte.
+      open.add(`fx:${fxId}:fold`);
+      requestRebuild(true);
+      const kort = el.querySelector(`[data-fx="${fxId}"]`);
+      if (kort) kort.scrollIntoView({ block: 'nearest' });
     }));
-    addRow.append(pair);
-    s.append(addRow);
+
+    effects.forEach((inst, index) => {
+      s.append(effectCard(fieldId, inst.id, index, list));
+    });
+
+    if (!effects.length) s.append(h('div', 'empty', 'Inga effekter'));
     return s;
   }
 
@@ -615,7 +692,14 @@ export function mount(el, ctx) {
       if (e) fn(e, v);
     };
 
-    const card = h('div', 'card');
+    const gateKey = `fx:${fxId}:gate`;
+    const foldKey = `fx:${fxId}:fold`;
+    // Hopfällt som standard, precis som klippkorten: utfällda kort bor i `open`.
+    const utfälld = open.has(foldKey);
+
+    const card = h('div', 'card fx');
+    card.dataset.fx = fxId;
+    if (utfälld) card.classList.add('open');
     if (!inst.enabled) card.classList.add('off');
     if (store.selection.kind === 'effect' && store.selection.id === fxId) card.classList.add('sel');
 
@@ -623,9 +707,6 @@ export function mount(el, ctx) {
     const grip = h('span', 'icon-btn', '⠿');
     grip.title = 'Dra för att ordna om';
     head.append(grip, h('span', 'nm', def ? def.name : inst.type));
-
-    const gateKey = `fx:${fxId}:gate`;
-    const foldKey = `fx:${fxId}:fold`;
 
     // Lysdiod: när effekten är grindad av en oscillator ska man se den slå till
     // och från i takt med musiken, inte behöva gissa.
@@ -667,7 +748,7 @@ export function mount(el, ctx) {
     });
     card.append(head);
 
-    if (open.has(foldKey)) {
+    if (!utfälld) {
       reorderable(list, card, grip, index, moveEffect(fieldId));
       return card;
     }
@@ -803,7 +884,11 @@ export function mount(el, ctx) {
       },
       dirty: ['render'],
       label: p.label.toLowerCase(),
-      min: p.min != null ? p.min : 0,
+      // Startvärden för det vanligaste fallet: envelope från parameterns
+      // NUVARANDE värde upp till max. En grind över hela intervallet — det
+      // gamla standardvalet — fick en zoom att slå mellan 0,2 och 4.
+      startMode: 'env',
+      min: typeof value() === 'number' ? value() : (p.min != null ? p.min : 0),
       max: p.max != null ? p.max : 1,
       step: p.step != null ? p.step : 0.01,
     });
@@ -1019,7 +1104,9 @@ export function mount(el, ctx) {
       const raw = outInput.value.trim();
       const v = raw === '' ? null : Number(raw);
       if (raw !== '' && !Number.isFinite(v)) { showOut(); return; }
-      set((c) => { c.out = v == null ? null : Math.max(0, v); }, 'klippets ut');
+      // Ut före in gav förr ett klipp med negativ längd — och tidigare släckte
+      // ett sådant klipp hela flödet.
+      set((c) => { c.out = v == null ? null : Math.max((c.in || 0) + 0.01, v); }, 'klippets ut');
       showOut();
     });
     addSync(() => { if (!focused(outInput)) showOut(); });

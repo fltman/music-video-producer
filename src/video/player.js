@@ -23,6 +23,13 @@ const SEEK_INTERVAL_MS = 50;
 /** Hur länge vi väntar på metadata i `preload` innan vi går vidare. */
 const READY_TIMEOUT_MS = 15000;
 
+/**
+ * Så långt i förväg nästa klipp görs redo. Elementet skapas, får metadata och
+ * seekas till sin startpunkt medan det nuvarande klippet fortfarande spelar —
+ * annars visar renderaren en tom bildruta i själva snittet.
+ */
+const PREROLL_S = 1.5;
+
 /** Marginal mot klippets slut — seek exakt till `duration` triggar `ended`. */
 const END_MARGIN = 0.04;
 
@@ -30,12 +37,21 @@ const now = () => (typeof performance !== 'undefined' && performance.now ? perfo
 
 /**
  * @param {(mediaId: string) => Promise<string|null>} getMediaURL blob-URL per media
+ * @param {{onFel?: (mediaId: string) => void}} [alternativ] anropas högst en gång per media
  * @returns {object} poolen
  */
-export function createVideoPool(getMediaURL) {
+export function createVideoPool(getMediaURL, alternativ = {}) {
   /** @type {Map<string, object>} */
   const entries = new Map();
   const stats = { elements: 0, active: 0, ready: 0, seeks: 0, corrections: 0, errors: 0 };
+
+  /** Medier som redan rapporterats — ett fel per fil räcker. */
+  const felade = new Set();
+  function rapporteraFel(mediaId) {
+    if (felade.has(mediaId)) return;
+    felade.add(mediaId);
+    alternativ.onFel?.(mediaId);
+  }
 
   let host = null;
   let playing = false;
@@ -128,6 +144,7 @@ export function createVideoPool(getMediaURL) {
       entry.error = el.error ? `mediefel ${el.error.code}` : 'okänt mediefel';
       stats.errors += 1;
       console.warn(`[videopool] ${entry.mediaId}: ${entry.error}`);
+      rapporteraFel(entry.mediaId);
       done();
     });
 
@@ -145,6 +162,7 @@ export function createVideoPool(getMediaURL) {
       entry.error = err && err.message ? err.message : 'okänt fel';
       stats.errors += 1;
       console.warn(`[videopool] kunde inte hämta ${entry.mediaId}: ${entry.error}`);
+      rapporteraFel(entry.mediaId);
       if (entry.settle) entry.settle();
       return;
     }
@@ -152,6 +170,7 @@ export function createVideoPool(getMediaURL) {
     if (!url) {
       entry.state = 'fel';
       entry.error = 'mediafilen saknas i biblioteket';
+      rapporteraFel(entry.mediaId);
       if (entry.settle) entry.settle();
       return;
     }
@@ -277,6 +296,27 @@ export function createVideoPool(getMediaURL) {
     }
   }
 
+  /**
+   * Gör nästa segments element redo i förväg. Bara när nästa klipp ligger i en
+   * ANNAN fil — samma fil betyder samma element, som redan har avkodad data och
+   * bara behöver seeka.
+   */
+  function prerollNext(field, time, gen) {
+    const nxt = field.nextSegment;
+    if (!nxt || !nxt.mediaId) return;
+    if (nxt.mediaId === field.mediaId) return;
+    if (nxt.t0 - time > PREROLL_S || nxt.t0 < time) return;
+
+    const entry = ensureEntry(nxt.mediaId, field.id);
+    entry.gen = gen; // används snart — får inte städas bort
+    if (entry.state === 'fel') return;
+    if (entry.el.readyState < 1) return; // väntar på metadata
+    const nyckel = `${nxt.t0}`;
+    if (entry.preroll === nyckel) return;
+    entry.preroll = nyckel;
+    seekTo(entry, targetFor(entry.el, nxt.offset || 0), true);
+  }
+
   return {
     stats,
 
@@ -299,6 +339,7 @@ export function createVideoPool(getMediaURL) {
         active += 1;
         if (entry.ready) ready += 1;
         updateEntry(entry, field, frameState.time);
+        prerollNext(field, frameState.time, gen);
       }
 
       // Element som inte används den här bildrutan ska inte mala i bakgrunden.

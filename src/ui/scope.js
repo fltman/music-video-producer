@@ -26,6 +26,10 @@ const PEAK_FALL_DB = 14; // dB per sekund
  * @param {string} oscId
  * @returns {{frame(time: number): void, destroy(): void}}
  */
+// Panelen rivs och nymonteras vid varje committad ändring — tidsfönstret man
+// ställt in med scroll ska överleva det, annars nollställs zoomen mitt i rattandet.
+const sparadeFönster = new Map(); // oscId → windowSec
+
 export function mountScope(container, ctx, oscId) {
   const { store } = ctx;
   const css = getComputedStyle(document.documentElement);
@@ -39,7 +43,7 @@ export function mountScope(container, ctx, oscId) {
   };
 
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  let windowSec = 4;
+  let windowSec = sparadeFönster.get(oscId) || 4;
   let width = 280;
   let destroyed = false;
 
@@ -83,6 +87,9 @@ export function mountScope(container, ctx, oscId) {
       console.error('[skop] kunde inte kompilera om:', err);
     }
     rita(senasteTid); // följ musen direkt i stället för vid nästa bildruta
+    // Tidslinjens spår ritas ur samma kompilerade data — säg till den, annars
+    // står spåret stilla under hela draget och hoppar först vid släpp.
+    store.emit('osc');
   }
 
   /** Sparar utgångsläget så att ångra får något att gå tillbaka till. */
@@ -118,7 +125,12 @@ export function mountScope(container, ctx, oscId) {
     else if (Math.abs(x - xHi) <= GRAB) specMode = 'hi';
     else if (x > xLo && x < xHi) specMode = 'flytta';
     else return;
-    spectrum.el.setPointerCapture(e.pointerId);
+    try {
+      spectrum.el.setPointerCapture(e.pointerId);
+    } catch {
+      // Utan fångad pekare fungerar draget ändå — det får bara
+      // inte rivas med om webbläsaren vägrar fånga den.
+    }
     beginDrag((s) => ({ lo: s.band.lo, hi: s.band.hi }));
     spectrum.grabX = x;
     e.preventDefault();
@@ -175,7 +187,12 @@ export function mountScope(container, ctx, oscId) {
     const yT = trosklY(o.threshold);
     if (Math.abs(y - yT) > GRAB * 2) return;
     dragTrosk = true;
-    scope.el.setPointerCapture(e.pointerId);
+    try {
+      scope.el.setPointerCapture(e.pointerId);
+    } catch {
+      // Utan fångad pekare fungerar draget ändå — det får bara
+      // inte rivas med om webbläsaren vägrar fånga den.
+    }
     beginDrag((s) => s.threshold);
     e.preventDefault();
   });
@@ -204,6 +221,7 @@ export function mountScope(container, ctx, oscId) {
   scope.el.addEventListener('wheel', (e) => {
     e.preventDefault();
     windowSec = clamp(windowSec * (e.deltaY > 0 ? 1.16 : 1 / 1.16), MIN_WINDOW, MAX_WINDOW);
+    sparadeFönster.set(oscId, windowSec);
   }, { passive: false });
 
   // ── Ritning ─────────────────────────────────────────────────────────────

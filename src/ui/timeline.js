@@ -6,7 +6,7 @@
 // store.transport.time i frame() — aldrig via prenumeration (CONTRACT.md §10).
 
 import { clamp, binarySearch, hexToRgb } from '../core/util.js';
-import { findField, findFlow, normalizeSpans } from '../core/model.js';
+import { findField, findFlow, normalizeSpans, splitFieldAt } from '../core/model.js';
 
 const RULER_H = 26;
 const OVERVIEW_H = 40;
@@ -19,6 +19,12 @@ const MAX_ZOOM = 200; // hur många gånger man får zooma in mot hela låten
 const MIN_SPAN = 0.05; // kortaste spann i sekunder
 const NEW_SPAN = 4; // längd på spann som skapas med dubbelklick
 const LABEL_GAP = 62; // minsta pixelavstånd mellan tidsetiketter
+
+const SCROLL_W = 3; // rullindikatorns bredd
+const SCROLL_PAD = 2; // avstånd till högerkanten
+const SCROLL_HIT = 12; // träffyta för att dra indikatorn
+const SCROLL_MIN = 24; // kortaste indikator i pixlar
+const DÖLJ_W = 12; // plats för dölj-krysset i oscillatorns namnplatta
 
 /**
  * @param {HTMLCanvasElement} canvas  #timeline
@@ -59,6 +65,10 @@ export function mount(canvas, app) {
   let lastDuration = -1;
   let drag = null;
   let hoverCursor = '';
+  let hoverSplit = null; // { t, y, h } — förhandsvisning av delningssnittet
+  let spökSpann = null; // { t0, t1, y, h, color } — kontur för dubbelklickets nya spann
+  let senastePekare = null; // { x, y, alt, shift } — för omräkning när vyn flyttar sig
+  let hoverRow = null;   // raden under pekaren, för att lysa upp dess dölj-kryss
   const view = { start: 0, end: 0 };
   const norm = { analysis: null, peak: 1, onset: 1 };
 
@@ -102,10 +112,15 @@ export function mount(canvas, app) {
     return [...store.project.fields].sort((a, b) => a.z - b.z || a.id.localeCompare(b.id));
   }
 
+  /** Oscillatorer med eget spår — `showLane: false` tar ingen höjd alls. */
+  function lanedOscillators() {
+    return store.project.oscillators.filter((o) => o.showLane !== false);
+  }
+
   function rows() {
     const out = [];
     let y = HEAD_H - scrollY;
-    for (const osc of store.project.oscillators) {
+    for (const osc of lanedOscillators()) {
       out.push({ kind: 'osc', id: osc.id, ref: osc, y, h: OSC_H });
       y += OSC_H;
     }
@@ -118,10 +133,27 @@ export function mount(canvas, app) {
 
   function contentHeight() {
     const p = store.project;
-    return HEAD_H + p.oscillators.length * OSC_H + p.fields.length * FIELD_H;
+    return HEAD_H + lanedOscillators().length * OSC_H + p.fields.length * FIELD_H;
   }
 
   const maxScroll = () => Math.max(0, contentHeight() - H);
+
+  /** Rullindikatorns läge, eller null när allt redan får plats. */
+  function scrollThumb() {
+    const viewH = H - HEAD_H;
+    const max = maxScroll();
+    if (viewH <= 0 || max <= 0) return null;
+    const h = Math.min(viewH, Math.max(SCROLL_MIN, (viewH / (viewH + max)) * viewH));
+    const range = Math.max(1, viewH - h);
+    return { y: HEAD_H + (scrollY / max) * range, h, viewH, range, max };
+  }
+
+  function setScroll(v) {
+    const next = clamp(v, 0, maxScroll());
+    if (next === scrollY) return;
+    scrollY = next;
+    staticDirty = true;
+  }
 
   function rowAt(y) {
     if (y < HEAD_H) return null;
@@ -213,6 +245,7 @@ export function mount(canvas, app) {
 
   function drawStatic() {
     staticDirty = false;
+    scrollY = clamp(scrollY, 0, maxScroll());
     o.setTransform(dpr, 0, 0, dpr, 0, 0);
     o.clearRect(0, 0, W, H);
     o.fillStyle = C.panel;
@@ -385,6 +418,12 @@ export function mount(canvas, app) {
         o.fillRect(0, r.y, 2, r.h);
       }
     }
+
+    const th = scrollThumb();
+    if (th) {
+      o.fillStyle = rgba(C.dim, 0.7);
+      o.fillRect(W - SCROLL_W - SCROLL_PAD, th.y, SCROLL_W, th.h);
+    }
     o.restore();
   }
 
@@ -447,9 +486,30 @@ export function mount(canvas, app) {
     o.font = FONT_NAME;
     const tw = o.measureText(osc.name).width;
     o.fillStyle = rgba(C.panel, 0.85);
-    o.fillRect(3, r.y + 3, tw + 8, 13);
+    o.fillRect(3, r.y + 3, tw + 8 + DÖLJ_W, 13);
     o.fillStyle = osc.color;
     o.fillText(osc.name, 7, r.y + 10);
+
+    // Kryss för att dölja spåret. Ligger i namnplattan så att åtgärden finns
+    // där behovet uppstår — inte bara som en dold brytare i biblioteket.
+    const kx = 7 + tw + 6;
+    o.strokeStyle = hoverRow === r.id ? C.text : rgba(C.dim, 0.55);
+    o.lineWidth = 1;
+    o.beginPath();
+    o.moveTo(kx, r.y + 5.5);
+    o.lineTo(kx + 5, r.y + 10.5);
+    o.moveTo(kx + 5, r.y + 5.5);
+    o.lineTo(kx, r.y + 10.5);
+    o.stroke();
+  }
+
+  /** Träffyta för dölj-krysset i en oscillators namnplatta. */
+  function döljTräff(r, x, y) {
+    if (r.kind !== 'osc') return false;
+    o.font = FONT_NAME;
+    const tw = o.measureText(r.ref.name).width;
+    const kx = 7 + tw + 6;
+    return x >= kx - 3 && x <= kx + 8 && y >= r.y + 2 && y <= r.y + 14;
   }
 
   function drawFieldTrack(r) {
@@ -527,7 +587,12 @@ export function mount(canvas, app) {
       else setView(view.start, view.end);
     }
     follow(t);
-    if (staticDirty) drawStatic();
+    if (staticDirty) {
+      // Vyn har flyttat sig under pekaren (follow-hopp, zoom, scroll) —
+      // delningsstrecket och markören måste följa med, annars ljuger de.
+      uppdateraHover();
+      drawStatic();
+    }
 
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.drawImage(off, 0, 0, W, H);
@@ -541,6 +606,36 @@ export function mount(canvas, app) {
       c.lineTo(gx, H);
       c.stroke();
       c.setLineDash([]);
+    }
+
+    if (!drag && hoverSplit) {
+      const y0 = Math.max(HEAD_H, hoverSplit.y);
+      const y1 = Math.min(H, hoverSplit.y + hoverSplit.h);
+      if (y1 > y0) {
+        const hx = crisp(t2x(hoverSplit.t));
+        c.strokeStyle = C.accent;
+        c.lineWidth = 1;
+        c.beginPath();
+        c.moveTo(hx, y0);
+        c.lineTo(hx, y1);
+        c.stroke();
+      }
+    }
+
+    if (!drag && spökSpann) {
+      // Spökkontur där dubbelklick skulle skapa ett spann — samma geometri
+      // som ett riktigt spann, klippt mot spårytan.
+      c.save();
+      c.beginPath();
+      c.rect(0, HEAD_H, W, H - HEAD_H);
+      c.clip();
+      const gx0 = clamp(t2x(spökSpann.t0), -8, W + 8);
+      const gx1 = clamp(t2x(spökSpann.t1), -8, W + 8);
+      roundRect(c, gx0, spökSpann.y + 3, Math.max(2, gx1 - gx0), spökSpann.h - 7, 4);
+      c.strokeStyle = rgba(spökSpann.color, 0.35);
+      c.lineWidth = 1;
+      c.stroke();
+      c.restore();
     }
 
     const x = t2x(t);
@@ -616,6 +711,18 @@ export function mount(canvas, app) {
     return null;
   }
 
+  /** Skulle en delning vid t ge två delar? Samma villkor som splitFieldAt(). */
+  function canSplitAt(field, t) {
+    let före = false;
+    let efter = false;
+    for (const s of field.spans) {
+      if (s.end <= t + 1e-6) före = true;
+      else if (s.start >= t - 1e-6) efter = true;
+      else return true;
+    }
+    return före && efter;
+  }
+
   function commitSpans(fieldId, orig, next, label) {
     const live = findField(store.project, fieldId);
     if (!live) return;
@@ -632,7 +739,12 @@ export function mount(canvas, app) {
   function onDown(e) {
     if (e.button !== 0) return;
     const { x, y } = pos(e);
-    canvas.setPointerCapture(e.pointerId);
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Utan fångad pekare fungerar draget ändå — det får bara
+      // inte rivas med om webbläsaren vägrar fånga den.
+    }
 
     if (y < HEAD_H) {
       drag = { kind: 'seek' };
@@ -641,9 +753,36 @@ export function mount(canvas, app) {
       return;
     }
 
+    const th = scrollThumb();
+    if (th && x >= W - SCROLL_HIT) {
+      // Klick i rännan flyttar indikatorn hit; sedan drar man den vidare.
+      let top = th.y;
+      if (y < th.y || y > th.y + th.h) {
+        top = clamp(y - th.h / 2, HEAD_H, HEAD_H + th.range);
+        setScroll(((top - HEAD_H) / th.range) * th.max);
+      }
+      drag = { kind: 'scroll', grab: y - top, range: th.range, max: th.max };
+      canvas.style.cursor = 'ns-resize';
+      return;
+    }
+
     const row = rowAt(y);
-    if (!row) return;
+    if (!row) {
+      // Klick i tomrummet under sista raden avmarkerar.
+      store.select(null, null);
+      invalidate();
+      return;
+    }
     if (row.kind === 'osc') {
+      if (döljTräff(row, x, y)) {
+        store.update((p) => {
+          const osc = p.oscillators.find((o) => o.id === row.id);
+          if (osc) osc.showLane = false;
+        }, { label: 'dölj spår', dirty: ['render'] });
+        app.toast?.(`${row.ref.name} dolt — visas igen i Osc-fliken`);
+        invalidate();
+        return;
+      }
       store.select('osc', row.id);
       invalidate();
       return;
@@ -658,6 +797,8 @@ export function mount(canvas, app) {
       const orig = row.ref.spans.map((s) => ({ ...s }));
       const next = orig.filter((_, i) => i !== hit.index);
       commitSpans(row.id, orig, next, 'ta bort spann');
+      // Utan besked ser det bara ut som att spannet försvann av sig självt.
+      app.toast?.(next.length ? 'Spann borttaget — ⌘Z ångrar' : `${row.ref.name} har inga spann kvar — ⌘Z ångrar`);
       invalidate();
       return;
     }
@@ -684,6 +825,10 @@ export function mount(canvas, app) {
     if (drag) {
       if (drag.kind === 'seek') {
         seekTo(x);
+        return;
+      }
+      if (drag.kind === 'scroll') {
+        setScroll(((y - drag.grab - HEAD_H) / drag.range) * drag.max);
         return;
       }
       const free = e.shiftKey;
@@ -716,18 +861,50 @@ export function mount(canvas, app) {
       return;
     }
 
+    senastePekare = { x, y, alt: e.altKey, shift: e.shiftKey };
+    uppdateraHover();
+  }
+
+  /** Hover-tillståndet ur senaste pekarläget. Körs om när vyn flyttar sig. */
+  function uppdateraHover() {
+    if (!senastePekare) return;
+    const { x, y, alt, shift } = senastePekare;
     let cur = 'default';
+    let split = null;
+    let spöke = null;
+    const th = scrollThumb();
     if (y < HEAD_H) {
       cur = 'pointer';
+    } else if (th && x >= W - SCROLL_HIT) {
+      cur = 'ns-resize';
     } else {
       const row = rowAt(y);
       if (row && row.kind === 'field') {
         const hit = spanAt(row.ref, x);
-        cur = hit ? (hit.edge ? 'col-resize' : 'grab') : 'default';
+        cur = hit ? (alt ? 'crosshair' : (hit.edge ? 'col-resize' : 'grab')) : 'default';
+        if (hit) {
+          const t = snapTime(x2t(x), shift);
+          if (canSplitAt(row.ref, t)) split = { t, y: row.y, h: row.h };
+        } else {
+          // Tom yta på en fältrad — visa var dubbelklick skulle lägga ett spann.
+          const dur = duration();
+          const start = clamp(snapTime(x2t(x), shift), 0, Math.max(0, dur - MIN_SPAN));
+          const end = Math.min(dur, start + NEW_SPAN);
+          if (end - start >= MIN_SPAN) {
+            spöke = { t0: start, t1: end, y: row.y, h: row.h, color: row.ref.color };
+          }
+        }
       } else if (row) {
         cur = 'pointer';
       }
+      const nyHover = row && row.kind === 'osc' ? row.id : null;
+      if (nyHover !== hoverRow) {
+        hoverRow = nyHover;
+        invalidate();   // krysset i namnplattan lyser upp på den hovrade raden
+      }
     }
+    hoverSplit = split;
+    spökSpann = spöke;
     if (cur !== hoverCursor) {
       hoverCursor = cur;
       canvas.style.cursor = cur;
@@ -736,7 +913,7 @@ export function mount(canvas, app) {
 
   function onUp(e) {
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
-    if (drag && drag.kind !== 'seek' && drag.moved) {
+    if (drag && (drag.kind === 'move' || drag.kind === 'resize') && drag.moved) {
       commitSpans(drag.fieldId, drag.orig, drag.work, drag.kind === 'move' ? 'flytta spann' : 'ändra spann');
     }
     drag = null;
@@ -747,6 +924,12 @@ export function mount(canvas, app) {
 
   function onDblClick(e) {
     const { x, y } = pos(e);
+    if (y < RULER_H) {
+      // Dubbelklick i linjalen — tillbaka till helhetsvyn.
+      fitView();
+      invalidate();
+      return;
+    }
     if (y < HEAD_H) return;
     const row = rowAt(y);
     if (!row || row.kind !== 'field') return;
@@ -758,6 +941,35 @@ export function mount(canvas, app) {
     const orig = row.ref.spans.map((s) => ({ ...s }));
     commitSpans(row.id, orig, [...orig, { start, end }], 'nytt spann');
     invalidate();
+  }
+
+  /** Högerklick på ett spann delar fältet vid klickets (snappade) tid. */
+  function onContextMenu(e) {
+    e.preventDefault();
+    const { x, y } = pos(e);
+    if (y < HEAD_H) return;
+    const row = rowAt(y);
+    if (!row || row.kind !== 'field') return;
+    if (!spanAt(row.ref, x)) return;
+    const t = snapTime(x2t(x), e.shiftKey);
+    if (!canSplitAt(row.ref, t)) return;
+
+    let nyttId = null;
+    store.update(
+      (p) => {
+        nyttId = splitFieldAt(p, row.id, t);
+      },
+      { label: 'dela fält', dirty: ['flow', 'render'] },
+    );
+    if (nyttId) store.select('field', nyttId);
+    hoverSplit = null;
+    invalidate();
+  }
+
+  function onLeave() {
+    if (drag) return;
+    hoverSplit = null;
+    spökSpann = null;
   }
 
   function onWheel(e) {
@@ -775,13 +987,20 @@ export function mount(canvas, app) {
       setView(start, start + next);
       return;
     }
-    if (maxScroll() > 0 && Math.abs(dy) > Math.abs(dx)) {
-      scrollY = clamp(scrollY + dy, 0, maxScroll());
-      staticDirty = true;
+    if (e.shiftKey) {
+      // Vågrät panorering. Många möss lägger shift-scrollet i deltaX i stället.
+      const d = ((dx || dy) / W) * len;
+      setView(view.start + d, view.end + d);
       return;
     }
-    const d = ((dx || dy) / W) * len;
-    setView(view.start + d, view.end + d);
+    // En styrplatta skickar vågräta svep som deltaX utan modifierare. Att bara
+    // titta på deltaY hade gjort tvåfingerssvepet i sidled dött.
+    if (Math.abs(dx) > Math.abs(dy)) {
+      const d = (dx / W) * len;
+      setView(view.start + d, view.end + d);
+      return;
+    }
+    setScroll(scrollY + dy);
   }
 
   canvas.addEventListener('pointerdown', onDown);
@@ -789,6 +1008,16 @@ export function mount(canvas, app) {
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onUp);
   canvas.addEventListener('dblclick', onDblClick);
+  canvas.addEventListener('contextmenu', onContextMenu);
+  canvas.addEventListener('pointerleave', onLeave);
+  canvas.addEventListener('pointerleave', () => {
+    senastePekare = null;
+    hoverSplit = null;
+    spökSpann = null;
+    if (hoverRow === null) return;
+    hoverRow = null;
+    invalidate();
+  });
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
   for (const ev of ['project', 'analysis', 'osc', 'flow', 'selection']) store.on(ev, invalidate);

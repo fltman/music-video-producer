@@ -175,6 +175,7 @@ class Renderer {
 
     this._pool = new Map();      // 'BxH' → { items: [...], gen }
     this._videoTex = new Map();  // HTMLVideoElement → { tex, ... }
+    this._held = new Map();      // fält-id → senaste dugliga bilden, mot blink i snitt
     this._prevTex = new Map();   // effektinstans-id → { tex, w, h, gen }
     this._programs = new Map();  // 'typ#pass' → { program, locs, failed }
     this._warned = new Set();
@@ -359,15 +360,39 @@ class Renderer {
     }
     const tex = video ? this._syncVideo(video) : null;
 
-    if (!tex) {
-      // Utan bild: fältets färg mörkad till 25 % så att rektangeln syns i redigeraren.
+    // Ett fält som en gång visat bild ska aldrig blinka till en färg. Vid ett
+    // klippbyte kan det nya elementet sakna avkodad data någon bildruta —
+    // då håller vi kvar den senaste bilden i stället. Färgfyllningen är till
+    // för tomma fält i redigeraren, inte för glappet i ett snitt.
+    let use = tex;
+    let aspect = field.aspect > 0 && isFinite(field.aspect) ? field.aspect : 16 / 9;
+    if (tex) {
+      this._held.set(field.id, { entry: this._videoTex.get(video), aspect });
+    } else {
+      const held = this._held.get(field.id);
+      const e = held && held.entry;
+      if (e && !e.dead && e.hasData && this._videoTex.get(e.video) === e) {
+        e.gen = this._gen; // den hålls kvar i bruk, alltså får den inte städas
+        use = e.tex;
+        aspect = held.aspect;
+      }
+    }
+
+    if (!use) {
+      // Fält med flöde men utan bild ännu: fältets färg mörkad till 25 %.
+      // Fält UTAN flöde ritas tomma — overlayens ram pekar redan ut rektangeln,
+      // och färgfyllningen ska entydigt betyda "flöde kopplat, bild saknas".
+      if (!field.flowId) {
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        return;
+      }
       const c = hexToRgb(field.color || '#808080');
       gl.clearColor(c[0] * 0.25, c[1] * 0.25, c[2] * 0.25, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       return;
     }
 
-    const aspect = field.aspect > 0 && isFinite(field.aspect) ? field.aspect : 16 / 9;
     const target = dst.w / dst.h;
     let sx = 1;
     let sy = 1;
@@ -382,7 +407,7 @@ class Renderer {
 
     const p = this._blit;
     gl.useProgram(p.program);
-    this._bindTex(0, tex);
+    this._bindTex(0, use);
     this._setInt(p, 'u_tex', 0);
     this._setVec2(p, 'u_uvScale', sx, sy);
     this._setVec2(p, 'u_uvOffset', (1 - sx) / 2, (1 - sy) / 2);
@@ -734,7 +759,13 @@ class Renderer {
       if (this._gen - entry.gen < GRACE) continue;
       this._detachFrameCallback(entry);
       gl.deleteTexture(entry.tex);
+      entry.dead = true;   // någon kan hålla den som senaste dugliga bild
       this._videoTex.delete(video);
+    }
+    // Håll inte kvar bilder för fält som inte längre finns.
+    for (const [id, held] of this._held) {
+      const e = held && held.entry;
+      if (!e || e.dead || this._videoTex.get(e.video) !== e) this._held.delete(id);
     }
     for (const [id, entry] of this._prevTex) {
       if (this._gen - entry.gen < GRACE) continue;

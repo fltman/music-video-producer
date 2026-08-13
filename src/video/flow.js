@@ -30,7 +30,9 @@ export function buildSchedule(spec, mediaById, events, duration) {
 
   const speed = Number.isFinite(flow.speed) && flow.speed > 0 ? flow.speed : 1;
 
-  // Förbered klippen. Ett klipp utan längd gör hela schemat meningslöst.
+  // Förbered klippen. Ett klipp utan längd hoppas ÖVER — det får inte släcka
+  // hela högen, och därmed varje fält som läser den. Ett felskrivet ut-värde
+  // eller en fil vars längd webbläsaren inte kunde läsa ska kosta ett klipp.
   const clips = [];
   for (const clip of flow.clips) {
     const media = lookupMedia(mediaById, clip.mediaId);
@@ -38,9 +40,10 @@ export function buildSchedule(spec, mediaById, events, duration) {
     const start = Math.max(0, Number.isFinite(clip.in) ? clip.in : 0);
     const end = Number.isFinite(clip.out) ? clip.out : mediaDuration;
     const srcLen = end - start;
-    if (!(srcLen > 0)) return [];
+    if (!(srcLen > 0)) continue;
     clips.push({ mediaId: clip.mediaId, offset: start, srcLen, wall: srcLen / speed });
   }
+  if (!clips.length) return [];
 
   const order = flow.order === 'random' || flow.order === 'pingpong' ? flow.order : 'sequential';
   const advance = flow.advance === 'onTrigger' || flow.advance === 'both' ? flow.advance : 'onEnd';

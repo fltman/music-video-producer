@@ -1,16 +1,21 @@
-// IndexedDB för mediablobar och små nyckelvärden. Se CONTRACT.md §3.
+// IndexedDB för mediablobar, projekt och små nyckelvärden. Se CONTRACT.md §3.
 //
-// Databasen heter `mvp` och har två lager:
-//   media — { id, blob, meta, savedAt }, nyckel = id (keyPath)
-//   meta  — godtyckligt JSON-värde per strängnyckel (utanförliggande nyckel)
+// Databasen heter `mvp` och har tre lager:
+//   media    — { id, projectId, blob, meta, savedAt }, nyckel = id (keyPath)
+//              index `projectId`, eftersom varje mediafil ägs av ett projekt
+//   projects — { id, name, created, modified, data }, nyckel = id (keyPath)
+//   meta     — godtyckligt JSON-värde per strängnyckel (utanförliggande nyckel)
 //
 // Blobarna ligger kvar mellan sessioner, så ett projekt som laddas om hittar
-// sina filer igen enbart via medie-id.
+// sina filer igen enbart via medie-id. Att radera ett projekt raderar också
+// dess blobar — annars hade diskutrymmet växt utan att någon kunde se varför.
 
 export const DB_NAME = 'mvp';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 export const MEDIA_STORE = 'media';
 export const META_STORE = 'meta';
+export const PROJECT_STORE = 'projects';
+export const PROJECT_INDEX = 'projectId';
 
 /** Så länge får en fil ta på sig att avslöja längd och mått. */
 const PROBE_TIMEOUT_MS = 15000;
@@ -43,8 +48,15 @@ export function openDB() {
     }
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(MEDIA_STORE)) db.createObjectStore(MEDIA_STORE, { keyPath: 'id' });
+      const tx = req.transaction;
+      const media = db.objectStoreNames.contains(MEDIA_STORE)
+        ? tx.objectStore(MEDIA_STORE)
+        : db.createObjectStore(MEDIA_STORE, { keyPath: 'id' });
+      // Poster från version 1 saknar projectId och hamnar därför utanför
+      // indexet tills migreringen i projects.js har adopterat dem.
+      if (!media.indexNames.contains(PROJECT_INDEX)) media.createIndex(PROJECT_INDEX, PROJECT_INDEX);
       if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE);
+      if (!db.objectStoreNames.contains(PROJECT_STORE)) db.createObjectStore(PROJECT_STORE, { keyPath: 'id' });
     };
     req.onblocked = () => {
       fail(new Error('Databasen är låst av en annan flik — stäng den och försök igen.'));
@@ -79,12 +91,13 @@ export function openDB() {
 }
 
 /** Lägger in eller ersätter en mediablob. `meta` är projektets MediaRef. */
-export async function putMedia(id, blob, meta = {}) {
+export async function putMedia(id, blob, meta = {}, projectId = null) {
   if (!id) throw new Error('Media saknar id.');
   if (!isBlob(blob)) throw new Error('Media saknar innehåll — förväntade en fil.');
   const db = await openDB();
   await runTx(db, MEDIA_STORE, 'readwrite', (s) => s.put({
     id,
+    projectId: projectId || null,
     blob,
     meta: plainMeta(meta),
     savedAt: Date.now(),
@@ -159,8 +172,11 @@ export async function deleteMedia(id) {
   await runTx(db, MEDIA_STORE, 'readwrite', (s) => s.delete(id));
 }
 
-/** Allt som ligger i lagret, utan att dra upp blobarna i onödan. */
-export async function listMedia() {
+/**
+ * Allt som ligger i lagret, utan att dra upp blobarna i onödan.
+ * Med `projectId` returneras bara det projektets media.
+ */
+export async function listMedia(projectId) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     let tx;
@@ -172,12 +188,20 @@ export async function listMedia() {
     }
     const out = [];
     let failure = null;
-    const req = tx.objectStore(MEDIA_STORE).openCursor();
+    const store = tx.objectStore(MEDIA_STORE);
+    const req = projectId
+      ? store.index(PROJECT_INDEX).openCursor(IDBKeyRange.only(projectId))
+      : store.openCursor();
     req.onsuccess = () => {
       const cur = req.result;
       if (!cur) return;
       const v = cur.value || {};
-      out.push({ id: v.id !== undefined ? v.id : cur.key, meta: v.meta || {} });
+      out.push({
+        id: v.id !== undefined ? v.id : cur.primaryKey,
+        projectId: v.projectId || null,
+        savedAt: v.savedAt || 0,
+        meta: v.meta || {},
+      });
       cur.continue();
     };
     req.onerror = () => {
@@ -187,6 +211,72 @@ export async function listMedia() {
     tx.onabort = () => reject(dbError(failure || tx.error));
     tx.onerror = () => reject(dbError(failure || tx.error));
   });
+}
+
+/**
+ * Sätter ägare på media som saknar en. Används av migreringen från version 1,
+ * där alla blobar låg i en gemensam hög.
+ *
+ * @returns {Promise<number>} antalet poster som adopterades
+ */
+export async function adoptOrphanMedia(projectId) {
+  if (!projectId) return 0;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    let tx;
+    try {
+      tx = db.transaction(MEDIA_STORE, 'readwrite');
+    } catch (err) {
+      reject(new Error(`Kunde inte adoptera media: ${message(err)}`));
+      return;
+    }
+    let n = 0;
+    let failure = null;
+    const req = tx.objectStore(MEDIA_STORE).openCursor();
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (!cur) return;
+      const v = cur.value;
+      if (v && !v.projectId) {
+        v.projectId = projectId;
+        cur.update(v);
+        n += 1;
+      }
+      cur.continue();
+    };
+    req.onerror = () => { failure = req.error; };
+    tx.oncomplete = () => resolve(n);
+    tx.onabort = () => reject(dbError(failure || tx.error));
+    tx.onerror = () => reject(dbError(failure || tx.error));
+  });
+}
+
+/** Raderar allt media som ett projekt äger. Returnerar antalet. */
+export async function deleteMediaForProject(projectId) {
+  if (!projectId) return 0;
+  const lista = await listMedia(projectId);
+  for (const m of lista) await deleteMedia(m.id);
+  return lista.length;
+}
+
+/**
+ * Kopierar ett projekts mediablobar till ett annat projekt.
+ * Varje kopia får ett nytt id, så att de två projekten är helt fristående.
+ *
+ * @returns {Promise<Map<string, string>>} gammalt id → nytt id
+ */
+export async function copyMediaToProject(fromProjectId, toProjectId, nyttId) {
+  const karta = new Map();
+  if (!fromProjectId || !toProjectId) return karta;
+  const lista = await listMedia(fromProjectId);
+  for (const m of lista) {
+    const blob = await getMediaBlob(m.id);
+    if (!blob) continue;
+    const id = nyttId();
+    await putMedia(id, blob, { ...m.meta, id }, toProjectId);
+    karta.set(m.id, id);
+  }
+  return karta;
 }
 
 /** Ungefärlig diskanvändning. Tål att API:t saknas. */

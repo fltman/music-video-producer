@@ -5,18 +5,26 @@
 // ett drag på scenen (som skickar project varje bildruta) inte river upp DOM:en.
 // frame() rör aldrig strukturen — bara oscillatorernas lysdioder.
 
-import { formatTime } from '../core/util.js';
 import {
-  createField, createFlow, createOscillator, createClip, findMedia, findFlow,
+  createField, createFlow, createOscillator, createClip, findMedia, findFlow, findOsc,
+  stripOscillatorRefs,
 } from '../core/model.js';
 import { oscValue } from '../audio/oscillator.js';
-import { MEDIA_MIME, FIELD_MIME, hasType } from './dnd.js';
+import { MEDIA_MIME, FIELD_MIME, FLOW_MIME, hasType } from './dnd.js';
 import { mountThumb, forgetMedia } from './thumb.js';
+import { getMediaURL } from '../store/media.js';
 
 /** Egna släpptyper: media dras till ett flöde, fältrader dras inom sin lista. */
 
+/** Filer från skrivbordet bär den här typen i ett drag. */
+const FILES_MIME = 'Files';
+
 /** Spannlängd för ett nytt fält när ingen låt är laddad. */
 const FALLBACK_DURATION = 60;
+
+/** Miniatyrens storlek i rutnätet. */
+const TILE_W = 128;
+const TILE_H = 72;
 
 /**
  * @param {HTMLElement} el #library
@@ -40,10 +48,10 @@ export function mount(el, ctx) {
   const oscSec = section('Oscillatorer', addOscillator);
 
   const flikar = [
-    { key: 'media', namn: 'Media', sec: mediaSec, antal: () => store.project.media.length },
-    { key: 'flow', namn: 'Flöden', sec: flowSec, antal: () => store.project.flows.length },
-    { key: 'field', namn: 'Fält', sec: fieldSec, antal: () => store.project.fields.length },
-    { key: 'osc', namn: 'Osc', sec: oscSec, antal: () => store.project.oscillators.length },
+    { key: 'media', namn: 'Media', titel: 'Importera media', sec: mediaSec, antal: () => store.project.media.length },
+    { key: 'flow', namn: 'Flöden', titel: 'Nytt flöde', sec: flowSec, antal: () => store.project.flows.length },
+    { key: 'field', namn: 'Fält', titel: 'Nytt fält', sec: fieldSec, antal: () => store.project.fields.length },
+    { key: 'osc', namn: 'Osc', titel: 'Ny oscillator', sec: oscSec, antal: () => store.project.oscillators.length },
   ];
   let aktiv = 'media';
 
@@ -55,9 +63,10 @@ export function mount(el, ctx) {
     b.append(flik.räknare);
     b.addEventListener('click', () => visa(flik.key));
     // Hovra med ett drag ⇒ öppna fliken, annars går det inte att dra media från
-    // en flik till ett mål i en annan.
+    // en flik till ett mål i en annan. Gäller både media och filer utifrån.
     let dröj = 0;
     b.addEventListener('dragover', (e) => {
+      if (!hasType(e, MEDIA_MIME) && !hasType(e, FILES_MIME)) return;
       e.preventDefault();
       if (aktiv === flik.key || dröj) return;
       dröj = setTimeout(() => { dröj = 0; visa(flik.key); }, 500);
@@ -77,13 +86,44 @@ export function mount(el, ctx) {
 
   el.append(flikrad, mediaSec.root, flowSec.root, fieldSec.root, oscSec.root);
 
+  // Media visas som miniatyrer i ett rutnät, inte som rader.
+  mediaSec.list.className = 'media-grid';
+  mediaSec.empty.textContent = 'Släpp filer här';
+
+  // ── Släppta filer importeras ────────────────────────────────────────────
+  // Bara filer utifrån; ett medium som dras inom appen hör hemma i ett flöde.
+
+  el.addEventListener('dragover', (e) => {
+    if (!hasType(e, FILES_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    el.classList.add('dropping');
+  });
+
+  el.addEventListener('dragleave', (e) => {
+    // dragleave bubblar från varje barn — släpp bara markeringen när pekaren
+    // verkligen lämnat panelen.
+    if (e.relatedTarget && el.contains(e.relatedTarget)) return;
+    el.classList.remove('dropping');
+  });
+
+  el.addEventListener('drop', (e) => {
+    el.classList.remove('dropping');
+    if (!hasType(e, FILES_MIME) || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    e.stopPropagation(); // annars importerar fönstrets släppyta samma filer igen
+    Promise.resolve(ctx.importFiles(e.dataTransfer.files))
+      .then(() => visa('media'))
+      .catch(reportError);
+  });
+
   function visa(key) {
     aktiv = key;
     for (const flik of flikar) {
       flik.knapp.classList.toggle('on', flik.key === key);
       flik.sec.root.hidden = flik.key !== key;
     }
-    läggTill.title = `Ny ${flikar.find((f) => f.key === key)?.namn.toLowerCase()}`;
+    läggTill.title = flikar.find((f) => f.key === key)?.titel || '';
   }
 
   function syncTabs() {
@@ -93,6 +133,12 @@ export function mount(el, ctx) {
   visa(aktiv);
 
   store.on('project', rebuild);
+  // Flikbytet hör till markeringsÄNDRINGEN — aldrig till rebuild-vägen, som körs
+  // på varje project-händelse (t.ex. mitt i ett drag från Media-fliken).
+  store.on('selection', () => {
+    const s = store.selection;
+    if (s.kind && flikar.some((f) => f.key === s.kind) && s.kind !== aktiv) visa(s.kind);
+  });
   store.on('selection', syncSelection);
   rebuild();
 
@@ -100,45 +146,79 @@ export function mount(el, ctx) {
 
   function buildMediaRow(m) {
     const id = m.id;
-    const row = { el: div('item media') };
+    const row = { el: div('tile') };
     row.el.draggable = true;
-    row.nm = span('nm');
-    row.dur = span('sub');
     if (m.kind === 'video') {
       // Bilden är det enda som skiljer klipp åt när filnamnen kommer från ett
-      // AI-verktyg. För muspekaren över den för att bläddra genom klippet.
-      row.kind = document.createElement('canvas');
-      row.kind.className = 'thumb sm';
-      const handle = mountThumb(row.kind, {
-        mediaId: id, w: 44, h: 25,
+      // AI-verktyg — därför ingen text. För muspekaren över miniatyren för att
+      // bläddra genom klippet.
+      row.bild = document.createElement('canvas');
+      row.bild.className = 'thumb tile';
+      const handle = mountThumb(row.bild, {
+        mediaId: id, w: TILE_W, h: TILE_H,
         getIn: () => 0, getOut: () => null, duration: m.duration,
       });
       row.destroy = () => handle.destroy();
+      row.el.append(row.bild);
     } else {
-      row.kind = span('sub');
+      // Låten har ingen bild — och till skillnad från klippen säger dess namn något.
+      row.el.classList.add('ljud');
+      row.nm = span('nm');
+      row.el.append(spanText('glyf', '♪'), row.nm);
     }
-    row.el.append(row.kind, row.nm, row.dur, cross(() => removeMedia(id)));
+    row.dur = span('dur');
+    row.el.append(row.dur, crossButton(() => removeMedia(id)));
+    // En ruta vars fil inte finns i databasen (projektfil från en annan dator)
+    // såg tidigare exakt ut som en frisk — och klick gjorde tyst ingenting.
+    getMediaURL(id).then((url) => {
+      if (!url) {
+        row.el.classList.add('saknas');
+        row.el.title = `${m.name} — filen finns inte på den här datorn, importera den igen`;
+      }
+    }).catch(() => {});
     row.el.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData(MEDIA_MIME, id);
       e.dataTransfer.effectAllowed = 'copy';
     });
+    if (m.kind === 'audio') {
+      // Låten gick förut bara att byta genom att importera om filen.
+      row.el.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        if (store.project.audio.mediaId === id) return;
+        Promise.resolve(ctx.useAsSong?.(id)).catch(reportError);
+      });
+    }
     return row;
   }
 
   function updateMediaRow(row, m) {
-    if (row.kind.tagName !== 'CANVAS') setText(row.kind, 'L');
-    row.el.title = m.name;
-    setText(row.nm, m.name);
-    setText(row.dur, formatTime(m.duration));
+    row.el.title = m.kind === 'audio' && store.project.audio.mediaId !== m.id
+      ? `${m.name} — klicka för att göra till projektets låt`
+      : m.name;
+    // En omimport kan ha läkt filen — kolla om markeringen fortfarande stämmer.
+    if (row.el.classList.contains('saknas')) {
+      getMediaURL(m.id).then((url) => {
+        if (url) row.el.classList.remove('saknas');
+      }).catch(() => {});
+    }
+    if (row.nm) setText(row.nm, m.name);
+    setText(row.dur, shortTime(m.duration));
+    row.el.classList.toggle('song', store.project.audio.mediaId === m.id);
   }
 
   function removeMedia(id) {
+    const varLåten = store.project.audio.mediaId === id;
     store.update((p) => {
       p.media = p.media.filter((m) => m.id !== id);
       for (const flow of p.flows) flow.clips = flow.clips.filter((c) => c.mediaId !== id);
       if (p.audio.mediaId === id) p.audio.mediaId = null;
     }, { label: 'ta bort media', dirty: ['flow', 'render'] });
     forgetMedia(id);
+    if (varLåten) {
+      // Annars spelar musiken vidare fast rutan är borta.
+      ctx.clearSong?.();
+      ctx.toast?.('Låten borttagen — ⌘Z ångrar');
+    }
   }
 
   function pickMedia() {
@@ -161,6 +241,12 @@ export function mount(el, ctx) {
     row.count = span('sub');
     row.el.append(row.nm, row.count, cross(() => removeFlow(id)));
     row.el.addEventListener('click', () => store.select('flow', id));
+    // Ett flöde kan dras till ett fält på scenen för att kopplas dit.
+    row.el.draggable = true;
+    row.el.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData(FLOW_MIME, id);
+      e.dataTransfer.effectAllowed = 'link';
+    });
     row.el.addEventListener('dragover', (e) => {
       if (!hasType(e, MEDIA_MIME)) return;
       e.preventDefault();
@@ -218,11 +304,14 @@ export function mount(el, ctx) {
   function buildFieldRow(field) {
     const id = field.id;
     const row = { el: div('item'), color: null };
-    row.el.draggable = true;
+    // Greppet är den enda dragbara ytan — dragstart bubblar upp till raden.
+    const grepp = spanText('icon-btn', '⠿');
+    grepp.title = 'Dra för att ordna om';
+    grepp.draggable = true;
     row.dot = div('dot');
     row.nm = span('nm');
     row.sub = span('sub');
-    row.el.append(row.dot, row.nm, row.sub, cross(() => removeField(id)));
+    row.el.append(grepp, row.dot, row.nm, row.sub, cross(() => removeField(id)));
     row.el.addEventListener('click', () => store.select('field', id));
     row.el.addEventListener('dragstart', (e) => {
       draggedField = id;
@@ -302,12 +391,20 @@ export function mount(el, ctx) {
 
   function buildOscRow(osc) {
     const id = osc.id;
-    const row = { el: div('item'), id, color: null, lit: null };
+    const row = { el: div('item'), id, color: null, lit: null, lane: null };
     row.dot = div('dot');
     row.nm = span('nm');
     row.sub = span('sub');
-    row.led = div('dot');
-    row.el.append(row.dot, row.nm, row.sub, cross(() => removeOscillator(id)), row.led);
+    // Egen knapp för spårets synlighet — färgpricken är data, inte en brytare.
+    row.öga = document.createElement('button');
+    row.öga.className = 'lane-btn';
+    row.öga.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      toggleLane(id);
+    });
+    row.led = div('led');
+    row.el.append(row.dot, row.nm, row.sub, row.öga, row.led, cross(() => removeOscillator(id)));
     row.el.addEventListener('click', () => store.select('osc', id));
     return row;
   }
@@ -318,8 +415,23 @@ export function mount(el, ctx) {
       row.dot.style.background = osc.color;
       row.lit = null; // tvingar om lysdioden till den nya färgen i nästa frame()
     }
+    const spår = osc.showLane !== false;
+    if (row.lane !== spår) {
+      row.lane = spår;
+      row.el.classList.toggle('dolt-spår', !spår);
+      row.öga.classList.toggle('av', !spår);
+      setText(row.öga, spår ? '◉' : '○');
+      row.öga.title = spår ? 'Dölj spåret i tidslinjen' : 'Visa spåret i tidslinjen';
+    }
     setText(row.nm, osc.name);
     setText(row.sub, sourceLabel(osc));
+  }
+
+  function toggleLane(id) {
+    store.update((p) => {
+      const osc = findOsc(p, id);
+      if (osc) osc.showLane = osc.showLane === false;
+    }, { label: 'visa spår', dirty: ['render'] });
   }
 
   function addOscillator() {
@@ -331,17 +443,7 @@ export function mount(el, ctx) {
   function removeOscillator(id) {
     store.update((p) => {
       p.oscillators = p.oscillators.filter((o) => o.id !== id);
-      const kill = (b) => (b && b.oscId === id ? null : b);
-      for (const field of p.fields) {
-        field.gate = kill(field.gate);
-        for (const inst of field.effects) {
-          inst.gate = kill(inst.gate);
-          for (const key of Object.keys(inst.bindings || {})) {
-            if (inst.bindings[key] && inst.bindings[key].oscId === id) delete inst.bindings[key];
-          }
-        }
-      }
-      for (const flow of p.flows) flow.advanceBinding = kill(flow.advanceBinding);
+      stripOscillatorRefs(p, id);
     }, { label: 'ta bort oscillator', dirty: ['osc', 'flow', 'render'] });
     dropSelection('osc', id);
   }
@@ -359,7 +461,6 @@ export function mount(el, ctx) {
 
   function syncSelection() {
     const s = store.selection;
-    if (s.kind && flikar.some((f) => f.key === s.kind) && s.kind !== aktiv) visa(s.kind);
     mark(flowRows, s.kind === 'flow' ? s.id : null);
     mark(fieldRows, s.kind === 'field' ? s.id : null);
     mark(oscRows, s.kind === 'osc' ? s.id : null);
@@ -446,6 +547,12 @@ function span(cls) {
   return el;
 }
 
+function spanText(cls, text) {
+  const el = span(cls);
+  el.textContent = text;
+  return el;
+}
+
 function cross(onClick) {
   const el = span('x');
   el.textContent = '×';
@@ -454,6 +561,28 @@ function cross(onClick) {
     onClick();
   });
   return el;
+}
+
+/** Samma kryss som i listorna, men en riktig knapp — miniatyren är dragbar. */
+function crossButton(onClick) {
+  const el = document.createElement('button');
+  el.className = 'x';
+  el.textContent = '×';
+  el.draggable = false;
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return el;
+}
+
+/** Längd som m:ss — hundradelar säger inget om ett klipp. */
+function shortTime(t) {
+  const a = Math.max(0, Number.isFinite(t) ? t : 0);
+  let m = Math.floor(a / 60);
+  let s = Math.round(a % 60);
+  if (s === 60) { s = 0; m += 1; }
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 function setText(node, text) {

@@ -147,3 +147,39 @@ test('migreringen är idempotent', () => {
   assertEqual(två.fields[0].speed, 1.5);
   assertEqual(två.flows[0].advance, undefined);
 });
+
+// ── Nästa segment: det som låter videopoolen förbereda klippbytet ──────────
+
+test('buildFrameState pekar ut nästa segment', () => {
+  const f = createField({ id: 'f1', spans: [{ start: 0, end: 12 }], flowId: 'w1', advance: 'onTrigger' }, 0);
+  const p = createProject({ media, flows: [hög], fields: [f] });
+  const sched = buildSchedule(spec(f), mediaById, flankar(2, 12), 12);
+  const vid = (t) => buildFrameState(p, { compiled: new Map(), schedules: new Map([['f1', sched]]), time: t, dt: 1 / 60 }).fields[0];
+
+  const a = vid(1);
+  assert(a.nextSegment, 'ska finnas ett nästa segment');
+  assertClose(a.nextSegment.t0, sched[1].t0, 1e-9, 'ska vara segment nummer två');
+  assert(a.nextSegment.t0 > a.segment.t0, 'nästa ska ligga efter det aktuella');
+
+  const mitten = vid((sched[2].t0 + sched[3].t0) / 2);
+  assertClose(mitten.nextSegment.t0, sched[3].t0, 1e-9, 'mitt i schemat');
+});
+
+test('sista segmentet har inget nästa', () => {
+  const f = createField({ id: 'f1', spans: [{ start: 0, end: 12 }], flowId: 'w1', advance: 'onEnd' }, 0);
+  const p = createProject({ media, flows: [hög], fields: [f] });
+  const sched = buildSchedule(spec(f), mediaById, null, 12);
+  const sista = buildFrameState(p, {
+    compiled: new Map(), schedules: new Map([['f1', sched]]),
+    time: sched[sched.length - 1].t0 + 0.1, dt: 1 / 60,
+  }).fields[0];
+  assertEqual(sista.nextSegment, null, 'inget nästa efter det sista');
+});
+
+test('utan schema finns varken segment eller nästa', () => {
+  const f = createField({ id: 'f1', spans: [{ start: 0, end: 12 }], flowId: 'w1' }, 0);
+  const p = createProject({ media, flows: [hög], fields: [f] });
+  const fs = buildFrameState(p, { compiled: new Map(), schedules: new Map(), time: 1, dt: 1 / 60 }).fields[0];
+  assertEqual(fs.segment, null);
+  assertEqual(fs.nextSegment, null);
+});

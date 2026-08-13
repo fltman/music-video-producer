@@ -8,11 +8,10 @@
   --line-soft: #1c1f25;
   --text: #e6e9ef;
   --muted: #838c9b;
-  --dim: #5b636f;
+  --dim: #7c8593;   /* 4,5+ mot alla tre panelbakgrunder — bär text på elva ställen */
   --accent: #ff3b6b;
   --accent-dim: #7a2440;
   --ok: #3bffb0;
-  --warn: #ffb020;
   --radius: 6px;
   --mono: ui-monospace, 'SF Mono', Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
@@ -91,7 +90,6 @@ html, body {
   text-transform: uppercase;
   color: var(--dim);
 }
-.section > header .spacer { flex: 1; }
 
 /* Flikar i biblioteket: fyra listor i stället för en lång kolumn. */
 .tabs {
@@ -163,6 +161,16 @@ html, body {
 #gl { display: block; width: 100%; height: 100%; }
 #overlay { position: absolute; inset: 0; }
 
+/* Enda läget där scenen får tala: ett helt tomt projekt. */
+.stage-tom {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  color: var(--dim);
+  font: 12px var(--sans);
+  pointer-events: none;
+}
+.stage-tom[hidden] { display: none; }
+
 #stage-hud {
   position: absolute;
   left: 12px; bottom: 8px;
@@ -192,6 +200,8 @@ html, body {
 }
 .fbox.sel { border-width: 1px; box-shadow: 0 0 0 1px currentColor inset; }
 .fbox.hidden-now { opacity: 0.32; border-style: dashed; }
+/* Ett flöde hålls över fältet — släpp för att koppla högen. */
+.fbox.droppbar { border-style: solid; box-shadow: 0 0 0 2px currentColor inset; }
 .fbox .h {
   position: absolute; width: 9px; height: 9px;
   background: #06070a; border: 1px solid currentColor;
@@ -215,6 +225,41 @@ html, body {
   overflow: hidden;
 }
 #timeline { display: block; width: 100%; height: 100%; }
+
+/* ── Avdelare ─────────────────────────────────────────────────────────── */
+
+.resizer { position: fixed; z-index: 6; }
+.resizer::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.resizer:hover::after, .resizer.dragging::after { opacity: 1; }
+
+.resizer.v {
+  top: var(--h-top); bottom: var(--h-tl);
+  left: var(--w-lib);
+  width: 9px; margin-left: -4px;
+  cursor: col-resize;
+}
+.resizer.v::after { top: 0; bottom: 0; left: 4px; width: 1px; }
+
+/* Inspektorns handtag sitter på höger sida — basen .resizer.v gäller i övrigt. */
+.resizer.insp { left: auto; right: var(--w-insp); }
+
+.resizer.h {
+  left: 0; right: 0;
+  bottom: var(--h-tl);
+  height: 9px; margin-bottom: -4px;
+  cursor: row-resize;
+}
+.resizer.h::after { left: 0; right: 0; bottom: 4px; height: 1px; }
+
+body.resizing { user-select: none; }
+body.resizing * { pointer-events: none; }
+body.resizing .resizer { pointer-events: auto; }
 
 /* ── Kontroller ───────────────────────────────────────────────────────── */
 
@@ -282,6 +327,15 @@ input[type="text"], input[type="number"], select {
 }
 input[type="number"] { font-family: var(--mono); }
 input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+/* Tangentbordsfokus måste synas. Tidigare hade ingen knappklass någon
+   fokusregel alls, och outline: none tog bort webbläsarens egen ring. */
+:where(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+.item:focus-visible, .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 select { cursor: pointer; appearance: none; padding-right: 18px;
   background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
   background-position: calc(100% - 11px) 10px, calc(100% - 7px) 10px;
@@ -321,19 +375,109 @@ input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px;
 .item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .sub { font: 10px/1 var(--mono); color: var(--dim); }
 .item .dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.item .led { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex: none; }
 .item .x { color: var(--dim); opacity: 0; }
 .item:hover .x { opacity: 1; }
 .item .x:hover { color: var(--accent); }
 
 .empty { color: var(--dim); font-size: 11px; padding: 6px 2px; }
 
+/* Media som rutnät: bilden är identiteten, filnamnen säger ingenting. */
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+}
+.tile {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: grab;
+  background: #000;
+  aspect-ratio: 16 / 9;
+}
+.tile:hover { border-color: var(--muted); }
+.tile.song { border-color: var(--accent); }
+.tile canvas.thumb.tile {
+  width: 100%; height: 100%;
+  border: 0; border-radius: 0;
+  display: block;
+}
+.tile .dur {
+  position: absolute; right: 3px; bottom: 3px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.65);
+  font: 9px/1.3 var(--mono);
+  color: var(--text);
+  pointer-events: none;
+}
+.tile .x {
+  position: absolute; right: 2px; top: 2px;
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.tile:hover .x { opacity: 1; }
+.tile .x:focus-visible { opacity: 1; }
+.tile .x:hover { background: var(--accent); color: #14060b; }
+.tile.ljud {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 8px;
+  background: var(--panel-2);
+  aspect-ratio: auto;
+  height: 34px;
+  grid-column: 1 / -1;
+  cursor: default;
+}
+.tile.ljud .glyf { color: var(--accent); font-size: 13px; }
+.tile.ljud .nm {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tile.ljud .dur { position: static; background: none; }
+
+/* Filen finns inte i databasen — typiskt en projektfil från en annan dator. */
+.tile.saknas { opacity: 0.45; border-style: dashed; }
+.tile.saknas::after {
+  content: 'saknas';
+  position: absolute; left: 4px; top: 3px;
+  font: 9px/1.4 var(--mono);
+  color: var(--accent);
+}
+.tile.ljud.saknas::after { position: static; margin-left: auto; order: 2; }
+
+/* Släpp filer på biblioteket för att importera. */
+#library.dropping { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* Avstängt oscillatorspår i tidslinjen. */
+/* Oscillatorspårets synlighet — en egen knapp, inte en överlastad färgprick. */
+.lane-btn {
+  width: 20px; height: 18px; flex: none;
+  display: grid; place-items: center;
+  background: none; border: 0; border-radius: 3px;
+  color: var(--muted);
+  font: 11px/1 var(--mono);
+  cursor: pointer;
+}
+.lane-btn:hover { background: var(--panel-2); color: var(--text); }
+.lane-btn.av { color: var(--dim); }
+.item.dolt-spår .nm { opacity: 0.55; }
+
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
   height: 18px; padding: 0 6px;
   border-radius: 9px; background: var(--panel-2);
   font: 10px/1 var(--mono); color: var(--muted);
+  cursor: pointer;
 }
-.chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+.chip:hover { background: #262a33; color: var(--text); }
 
 /* Effekt- och kopplingskort i inspektorn */
 .card {
@@ -365,7 +509,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px;
 .card.klipp.open > .body { display: block; }
 .card.klipp { margin: 3px 0; }
 .card.klipp > header .sub { font: 10px/1 var(--mono); color: var(--dim); }
-.card.klipp > header::after {
+.card.klipp > header::after,
+.card.fx > header::after {
   content: '';
   width: 5px; height: 5px;
   margin-left: 1px;
@@ -374,7 +519,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px;
   transform: rotate(-45deg);
   transition: transform 0.12s;
 }
-.card.klipp.open > header::after { transform: rotate(45deg); }
+.card.klipp.open > header::after,
+.card.fx.open > header::after { transform: rotate(45deg); }
 
 /* Miniatyrer: bilden är det enda som skiljer klipp åt när filnamnen är maskinnamn. */
 .thumb {
@@ -385,8 +531,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px;
   background: #000;
   cursor: ew-resize;
 }
-.thumb.sm { width: 44px; height: 25px; }
-.item.media { height: 32px; }
 
 .drop-line {
   height: 2px;
@@ -423,14 +567,49 @@ input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px;
 .row.bound > label { color: var(--osc, var(--muted)); }
 .row.bound .val { color: var(--osc, var(--dim)); }
 
-/* Grindad effekt: lysdioden slår i takt, kortet mörknar när grinden är stängd. */
+/* Grindad effekt: lysdioden slår i takt, huvudet mörknar när grinden är stängd.
+   Kroppen lämnas ljus — reglagen man rattar ska gå att läsa även då. */
 .card > header .led {
   width: 7px; height: 7px; flex: none;
   border-radius: 50%;
   background: var(--line);
   transition: background 0.06s;
 }
-.card.gated { opacity: 0.45; }
+.card.gated > header { opacity: 0.45; }
+
+/* Projektknappen är en meny — chevronen är dess kännetecken. */
+.projekt-knapp { font-weight: 600; max-width: 220px; overflow: hidden; white-space: nowrap; }
+.projekt-knapp .chevron {
+  width: 6px; height: 6px; flex: none;
+  margin-left: 2px; margin-top: -3px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+}
+.projekt-knapp:hover .chevron { border-color: var(--text); }
+
+/* Rullgardin (projektmenyn) */
+.menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 240px;
+  max-width: 380px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+.menu .sep { height: 1px; margin: 5px 2px; background: var(--line); }
+.menu .item { height: auto; min-height: 28px; padding: 4px 7px; }
+.menu .item .nm { display: block; }
+.menu .item .sub { display: block; font: 10px/1.4 var(--mono); color: var(--dim); }
+.menu .item.sel { border-color: var(--accent); }
+.menu .item .x { flex: none; }
+.menu .item .x.penna:hover { color: var(--text); }
+.menu button.item { width: 100%; background: none; border: 0; text-align: left; }
 
 /* Toast + släppyta */
 #toast {
@@ -451,9 +630,49 @@ input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px;
   display: none; place-items: center;
   background: rgba(11, 12, 14, 0.82);
   border: 2px dashed var(--accent);
+  pointer-events: none;   /* släppet ska nå elementen under overlayn */
 }
 #drop-hint.on { display: grid; }
 #drop-hint span { font: 600 15px var(--sans); color: var(--text); }
 
 .busy { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
   background: rgba(11,12,14,0.7); font: 12px var(--mono); color: var(--muted); }
+
+/* Inspelning: en rad, inte ett överlägg. Scenen ska synas medan man spelar in,
+   och avbrytknappen ska gå att träffa. */
+.rec-bar {
+  /* Nere till höger, över tidslinjen — aldrig över scenen. Det man spelar in
+     ska inte skymmas av att man spelar in det. */
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+}
+.rec-dot {
+  width: 9px; height: 9px; flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: rec-blink 1.1s steps(2, end) infinite;
+}
+@keyframes rec-blink { 50% { opacity: 0.25; } }
+.rec-text { font: 11px/1 var(--mono); color: var(--text); white-space: nowrap; }
+.rec-track {
+  width: 180px; height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.rec-fill { height: 100%; width: 0; background: var(--accent); transition: width 0.2s linear; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot { animation: none; }
+  .rec-fill { transition: none; }
+}
