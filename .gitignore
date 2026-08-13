@@ -18,3 +18,6 @@ vault/
 # Python-cache
 __pycache__/
 *.pyc
+
+# Tillfälliga bildrutor för skärmdumpar
+assets/_frames/
