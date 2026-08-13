@@ -1,0 +1,459 @@
+/* Designsystem. UI-moduler använder dessa klasser — hitta inte på egna primitiver. */
+
+:root {
+  --bg: #0b0c0e;
+  --panel: #131519;
+  --panel-2: #1a1d23;
+  --line: #24282f;
+  --line-soft: #1c1f25;
+  --text: #e6e9ef;
+  --muted: #838c9b;
+  --dim: #5b636f;
+  --accent: #ff3b6b;
+  --accent-dim: #7a2440;
+  --ok: #3bffb0;
+  --warn: #ffb020;
+  --radius: 6px;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --h-top: 44px;
+  --w-lib: 244px;
+  --w-insp: 312px;
+  --h-tl: 268px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1.45 var(--sans);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: grid;
+  height: 100vh;
+  grid-template-columns: var(--w-lib) minmax(0, 1fr) var(--w-insp);
+  grid-template-rows: var(--h-top) minmax(0, 1fr) var(--h-tl);
+  grid-template-areas:
+    "top top top"
+    "lib stage insp"
+    "tl  tl    tl";
+}
+
+/* ── Topbar ───────────────────────────────────────────────────────────── */
+
+#topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font: 600 13px/1 var(--mono);
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+.brand span { color: var(--accent); margin-left: 2px; }
+
+.tb-group { display: flex; align-items: center; gap: 6px; }
+.tb-transport { flex: 1; justify-content: center; }
+.tb-right { margin-left: auto; }
+
+/* ── Paneler ──────────────────────────────────────────────────────────── */
+
+#library { grid-area: lib; border-right: 1px solid var(--line); }
+#inspector { grid-area: insp; border-left: 1px solid var(--line); }
+
+.panel {
+  background: var(--panel);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.panel::-webkit-scrollbar { width: 8px; }
+.panel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+.section { border-bottom: 1px solid var(--line-soft); padding: 8px 10px 10px; }
+.section > header {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 6px;
+  font: 600 10px/1 var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.section > header .spacer { flex: 1; }
+
+/* Flikar i biblioteket: fyra listor i stället för en lång kolumn. */
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  padding: 0 4px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.tabs .spacer { flex: 1; }
+.tabs > button:not(.icon-btn) {
+  height: 30px;
+  padding: 0 7px;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.tabs > button:not(.icon-btn):hover { color: var(--text); }
+.tabs > button.on { color: var(--text); border-bottom-color: var(--accent); }
+.tabs .count {
+  margin-left: 4px;
+  font: 9px/1 var(--mono);
+  color: var(--dim);
+  vertical-align: 1px;
+}
+.tabs > button.on .count { color: var(--accent); }
+.tabs .icon-btn { align-self: center; }
+
+/* Fäst överst i panelen — live-skopet ska synas även när man rullat ned. */
+.section.pinned {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  padding-top: 4px;
+  box-shadow: 0 8px 14px -10px rgba(0, 0, 0, 0.9);
+}
+
+/* ── Scen ─────────────────────────────────────────────────────────────── */
+
+#stage {
+  grid-area: stage;
+  position: relative;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(45deg, #0d0e11 25%, transparent 25%) -8px 0/16px 16px,
+    linear-gradient(-45deg, #0d0e11 25%, transparent 25%) -8px 0/16px 16px,
+    linear-gradient(45deg, transparent 75%, #0d0e11 75%) -8px 0/16px 16px,
+    linear-gradient(-45deg, transparent 75%, #0d0e11 75%) -8px 0/16px 16px,
+    #090a0c;
+  overflow: hidden;
+  padding: 16px;
+}
+
+#stage-inner {
+  position: relative;
+  background: #000;
+  box-shadow: 0 0 0 1px var(--line), 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+#gl { display: block; width: 100%; height: 100%; }
+#overlay { position: absolute; inset: 0; }
+
+#stage-hud {
+  position: absolute;
+  left: 12px; bottom: 8px;
+  font: 10px/1 var(--mono);
+  color: var(--dim);
+  pointer-events: none;
+  white-space: pre;
+}
+
+/* Fälthandtag i overlay */
+.fbox {
+  position: absolute;
+  border: 1px solid currentColor;
+  cursor: move;
+  color: var(--dim);
+}
+.fbox .flabel {
+  position: absolute; top: -17px; left: -1px;
+  padding: 1px 5px;
+  font: 600 9px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  background: currentColor;
+  color: #06070a;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+  user-select: none;
+}
+.fbox.sel { border-width: 1px; box-shadow: 0 0 0 1px currentColor inset; }
+.fbox.hidden-now { opacity: 0.32; border-style: dashed; }
+.fbox .h {
+  position: absolute; width: 9px; height: 9px;
+  background: #06070a; border: 1px solid currentColor;
+}
+.fbox .h.nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.fbox .h.ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.fbox .h.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.fbox .h.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.fbox .h.n  { left: 50%; top: -5px; margin-left: -5px; cursor: ns-resize; }
+.fbox .h.s  { left: 50%; bottom: -5px; margin-left: -5px; cursor: ns-resize; }
+.fbox .h.w  { top: 50%; left: -5px; margin-top: -5px; cursor: ew-resize; }
+.fbox .h.e  { top: 50%; right: -5px; margin-top: -5px; cursor: ew-resize; }
+
+/* ── Tidslinje ────────────────────────────────────────────────────────── */
+
+#timeline-wrap {
+  grid-area: tl;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  position: relative;
+  overflow: hidden;
+}
+#timeline { display: block; width: 100%; height: 100%; }
+
+/* ── Kontroller ───────────────────────────────────────────────────────── */
+
+button, input, select, textarea { font: inherit; color: inherit; font-family: var(--sans); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+.btn:hover { background: #22262e; border-color: #333a45; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #14060b; font-weight: 600; }
+.btn.primary:hover { background: #ff5480; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--panel-2); color: var(--text); }
+.btn.wide { width: 100%; justify-content: center; }
+.btn.rec { color: var(--accent); }
+.btn[disabled] { opacity: 0.4; pointer-events: none; }
+.btn.on { background: var(--accent-dim); border-color: var(--accent); color: #ffd9e3; }
+
+.icon-btn {
+  display: grid; place-items: center;
+  width: 26px; height: 24px;
+  background: transparent; border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted); cursor: pointer;
+}
+.icon-btn:hover { background: var(--panel-2); color: var(--text); }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.seg button {
+  height: 22px; padding: 0 8px;
+  background: var(--panel-2); border: 0; border-right: 1px solid var(--line);
+  color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--accent-dim); color: #ffd9e3; }
+.seg button:hover:not(.on) { background: #262a33; color: var(--text); }
+
+.row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+}
+.row > label { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.row.wide { grid-template-columns: 1fr; }
+.row .pair { display: flex; gap: 6px; align-items: center; }
+
+input[type="text"], input[type="number"], select {
+  height: 24px; width: 100%; min-width: 0;
+  padding: 0 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+input[type="number"] { font-family: var(--mono); }
+input:focus, select:focus { outline: none; border-color: var(--accent); }
+select { cursor: pointer; appearance: none; padding-right: 18px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 11px) 10px, calc(100% - 7px) 10px;
+  background-size: 4px 4px; background-repeat: no-repeat; }
+
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 20px; background: transparent; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px; background: var(--line); border-radius: 2px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; margin-top: -4px;
+  border-radius: 50%; background: var(--text); border: 0;
+}
+input[type="range"]:focus::-webkit-slider-thumb { background: var(--accent); }
+input[type="color"] {
+  width: 24px; height: 24px; padding: 0; border: 1px solid var(--line);
+  border-radius: var(--radius); background: none; cursor: pointer;
+}
+input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+
+.val { font: 10px/1 var(--mono); color: var(--dim); min-width: 34px; text-align: right; }
+
+/* Listor i biblioteket */
+.list { display: flex; flex-direction: column; gap: 2px; }
+.item {
+  display: flex; align-items: center; gap: 7px;
+  height: 26px; padding: 0 7px;
+  border: 1px solid transparent; border-radius: var(--radius);
+  cursor: pointer; user-select: none;
+}
+.item:hover { background: var(--panel-2); }
+.item.sel { background: var(--panel-2); border-color: var(--accent); }
+.item .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .sub { font: 10px/1 var(--mono); color: var(--dim); }
+.item .dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.item .x { color: var(--dim); opacity: 0; }
+.item:hover .x { opacity: 1; }
+.item .x:hover { color: var(--accent); }
+
+.empty { color: var(--dim); font-size: 11px; padding: 6px 2px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 18px; padding: 0 6px;
+  border-radius: 9px; background: var(--panel-2);
+  font: 10px/1 var(--mono); color: var(--muted);
+}
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+/* Effekt- och kopplingskort i inspektorn */
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin: 6px 0;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.card > header {
+  display: flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 7px;
+  background: #1e222a;
+  cursor: pointer; user-select: none;
+}
+.card > header .nm {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card > header > * { flex: none; }
+.card > header.med-bild { height: 44px; }
+
+/* Klipp fälls ihop till en rad — tio klipp ska rymmas utan att man rullar. */
+.card.klipp > .body { display: none; }
+.card.klipp.open > .body { display: block; }
+.card.klipp { margin: 3px 0; }
+.card.klipp > header .sub { font: 10px/1 var(--mono); color: var(--dim); }
+.card.klipp > header::after {
+  content: '';
+  width: 5px; height: 5px;
+  margin-left: 1px;
+  border-right: 1px solid var(--dim);
+  border-bottom: 1px solid var(--dim);
+  transform: rotate(-45deg);
+  transition: transform 0.12s;
+}
+.card.klipp.open > header::after { transform: rotate(45deg); }
+
+/* Miniatyrer: bilden är det enda som skiljer klipp åt när filnamnen är maskinnamn. */
+.thumb {
+  width: 64px; height: 36px;
+  display: block; flex: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #000;
+  cursor: ew-resize;
+}
+.thumb.sm { width: 44px; height: 25px; }
+.item.media { height: 32px; }
+
+.drop-line {
+  height: 2px;
+  margin: 3px 0;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+.card > .body { padding: 6px 8px 8px; }
+.card.off { opacity: 0.5; }
+.card.sel { border-color: var(--accent); }
+
+.bindbtn {
+  display: grid; place-items: center;
+  width: 18px; height: 18px; flex: none;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: transparent; color: var(--dim); cursor: pointer;
+  font: 9px/1 var(--mono);
+}
+.bindbtn:hover { color: var(--text); border-color: var(--muted); }
+.bindbtn.on { border-color: currentColor; background: color-mix(in srgb, currentColor 18%, transparent); }
+
+/* En kopplad parameter styrs av oscillatorn, inte av reglaget: reglaget blir en
+   mätare som följer musiken. --osc sätts per rad till oscillatorns färg. */
+.row.bound input[type="range"] { cursor: default; opacity: 1; }
+.row.bound input[type="range"]::-webkit-slider-thumb {
+  background: var(--osc, var(--accent));
+  width: 9px; height: 9px; margin-top: -3px;
+}
+.row.bound input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: color-mix(in srgb, var(--osc, var(--accent)) 25%, var(--line));
+}
+.row.bound > label { color: var(--osc, var(--muted)); }
+.row.bound .val { color: var(--osc, var(--dim)); }
+
+/* Grindad effekt: lysdioden slår i takt, kortet mörknar när grinden är stängd. */
+.card > header .led {
+  width: 7px; height: 7px; flex: none;
+  border-radius: 50%;
+  background: var(--line);
+  transition: background 0.06s;
+}
+.card.gated { opacity: 0.45; }
+
+/* Toast + släppyta */
+#toast {
+  position: fixed; left: 50%; bottom: calc(var(--h-tl) + 16px);
+  transform: translateX(-50%) translateY(8px);
+  padding: 7px 14px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s;
+  z-index: 50;
+}
+#toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.err { border-color: var(--accent); color: #ffc3d2; }
+
+#drop-hint {
+  position: fixed; inset: 0; z-index: 60;
+  display: none; place-items: center;
+  background: rgba(11, 12, 14, 0.82);
+  border: 2px dashed var(--accent);
+}
+#drop-hint.on { display: grid; }
+#drop-hint span { font: 600 15px var(--sans); color: var(--text); }
+
+.busy { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center;
+  background: rgba(11,12,14,0.7); font: 12px var(--mono); color: var(--muted); }

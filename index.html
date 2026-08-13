@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Musikvideoproducenten</title>
+<link rel="stylesheet" href="src/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b0c0e'/><rect x='6' y='13' width='4' height='6' rx='1' fill='%23ff3b6b'/><rect x='13' y='8' width='4' height='16' rx='1' fill='%234dd8ff'/><rect x='20' y='11' width='4' height='10' rx='1' fill='%23c8ff4d'/></svg>">
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand">MVP<span>·</span></div>
+    <div class="tb-group" id="tb-file"></div>
+    <div class="tb-group tb-transport" id="tb-transport"></div>
+    <div class="tb-group tb-right" id="tb-right"></div>
+  </header>
+
+  <aside id="library" class="panel"></aside>
+
+  <main id="stage">
+    <div id="stage-inner">
+      <canvas id="gl"></canvas>
+      <div id="overlay"></div>
+    </div>
+    <div id="stage-hud"></div>
+  </main>
+
+  <aside id="inspector" class="panel"></aside>
+
+  <section id="timeline-wrap">
+    <canvas id="timeline"></canvas>
+  </section>
+
+  <div id="toast"></div>
+  <div id="drop-hint"><span>Släpp video, ljud eller projektfil</span></div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

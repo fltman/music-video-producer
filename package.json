@@ -1,0 +1,13 @@
+{
+  "name": "music-video-producer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ljudreaktiv videosynt med tidslinje — fält, videoflöden, oscillatorer och effekter.",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node test/run.mjs",
+    "assets": "bash tools/make-assets.sh"
+  }
+}

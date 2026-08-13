@@ -1,0 +1,20 @@
+node_modules/
+.DS_Store
+*.log
+
+# Genererade testassets — återskapas bitidentiskt av tools/make-assets.sh
+assets/*.mp4
+assets/*.webm
+assets/*.wav
+assets/*.mp3
+
+# Exporterade videor
+export/
+*.webm
+
+# Obsidian-valv: anteckningar och idéer, aldrig till publika repon
+vault/
+
+# Python-cache
+__pycache__/
+*.pyc
