@@ -12,6 +12,10 @@ frekvensband  →  triggernivå  →  oscillator  →  koppling  →  något hä
 
 ![Hela gränssnittet](docs/img/01-oversikt.png)
 
+> **Demovideo (3:07)** — en genomgång av hela programmet finns under
+> [Releases](https://github.com/fltman/music-video-producer/releases). Berättarrösten
+> är en AI-klon av upphovsmannens röst, vilket sägs i videons första mening.
+
 Vanilla ES-moduler, inget byggsteg, inga beroenden. WebGL2 för kompositionen.
 
 ## Kom igång

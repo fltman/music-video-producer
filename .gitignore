@@ -21,3 +21,11 @@ __pycache__/
 
 # Tillfälliga bildrutor för skärmdumpar
 assets/_frames/
+
+# Demovideo: mellansteg. Manus (demo/narration/) och stillbilder (demo/shots/)
+# behålls så att videon kan byggas om; ljudet ligger redan i mp4:an.
+demo/clips/
+demo/audio/
+
+# Demovideon (26 MB) — distribueras som GitHub-release, inte i repot
+demo/*.mp4
